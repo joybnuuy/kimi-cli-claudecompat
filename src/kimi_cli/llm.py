@@ -152,6 +152,8 @@ def create_llm(
 
             if gen_kwargs:
                 chat_provider = chat_provider.with_generation_kwargs(**gen_kwargs)
+            if os.getenv("KIMI_THINKING_DISABLED", "").lower() in ("1", "true", "yes"):
+                chat_provider = chat_provider.with_thinking("off")
         case "openai_legacy":
             from kosong.contrib.chat_provider.openai_legacy import OpenAILegacy
 
