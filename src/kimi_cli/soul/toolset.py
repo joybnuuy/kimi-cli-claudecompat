@@ -289,10 +289,24 @@ class KimiToolset:
                             ),
                         )
 
+                # Apply updatedInput from hooks (e.g., RTK command rewriting)
+                effective_arguments = arguments
+                for result in results:
+                    if result.updated_input is not None:
+                        if isinstance(effective_arguments, dict):
+                            effective_arguments = {**effective_arguments, **result.updated_input}
+                        else:
+                            effective_arguments = result.updated_input
+                        logger.debug(
+                            "Hook rewrote tool input for {}: {}",
+                            tool_call.function.name,
+                            result.updated_input,
+                        )
+
                 # --- Execute tool ---
                 t0 = time.monotonic()
                 try:
-                    ret = await tool.call(arguments)
+                    ret = await tool.call(effective_arguments)
                 except Exception as e:
                     tool_elapsed = time.monotonic() - t0
                     logger.exception(
