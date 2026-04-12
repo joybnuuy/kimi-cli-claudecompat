@@ -327,8 +327,12 @@ def _convert_message(message: Message) -> ChatCompletionMessageParam:
         # Dropping `content` entirely is always accepted, so do that whenever
         # the visible content is effectively empty alongside a tool call.
         dumped_message.pop("content", None)
-    if reasoning_content:
-        dumped_message["reasoning_content"] = reasoning_content
+    # Always include reasoning_content on assistant messages. Moonshot's API
+    # requires this field when thinking is enabled (which proxies like OpenCode
+    # Go may enable server-side). Use a single space when no thinking output
+    # exists — empty string may be rejected.
+    if message.role == "assistant":
+        dumped_message["reasoning_content"] = reasoning_content or " "
     return cast(ChatCompletionMessageParam, dumped_message)
 
 
