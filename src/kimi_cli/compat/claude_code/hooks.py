@@ -45,6 +45,36 @@ _DIRECT_EVENT_MAP: dict[str, str] = {
     "SubagentStart": "SubagentStart",
 }
 
+# Claude Code tool names → kimi tool names for matcher rewriting
+_TOOL_NAME_MAP: dict[str, str] = {
+    "Bash": "Shell",
+    "Write": "WriteFile",
+    "Edit": "StrReplaceFile",
+    "Read": "ReadFile",
+    "WebSearch": "SearchWeb",
+    "WebFetch": "FetchURL",
+}
+
+
+def _translate_matcher(matcher: str) -> str:
+    """Rewrite Claude Code tool names in a matcher pattern to kimi equivalents.
+
+    Handles pipe-separated patterns like "Bash|Write" → "Shell|WriteFile"
+    and regex patterns like "mcp__.*" (passed through unchanged).
+    """
+    if not matcher:
+        return matcher
+
+    # Split on pipe, translate each part, rejoin
+    parts = matcher.split("|")
+    translated = [_TOOL_NAME_MAP.get(part, part) for part in parts]
+    result = "|".join(translated)
+
+    if result != matcher:
+        logger.debug("Translated hook matcher: {} → {}", matcher, result)
+
+    return result
+
 
 def translate_claude_hooks(settings: dict[str, Any]) -> list[HookDef]:
     """Extract hook definitions from Claude Code settings and convert to kimi HookDefs.
@@ -86,7 +116,8 @@ def _extract_hooks(source: dict[str, Any]) -> list[HookDef]:
                 continue
 
             # Claude Code uses "matcher" or legacy "pattern" field
-            matcher = matcher_group.get("matcher") or matcher_group.get("pattern", "")
+            raw_matcher = matcher_group.get("matcher") or matcher_group.get("pattern", "")
+            matcher = _translate_matcher(raw_matcher)
 
             hooks = matcher_group.get("hooks")
             if not isinstance(hooks, list):

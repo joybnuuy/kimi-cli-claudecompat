@@ -262,7 +262,7 @@ class TestTranslateClaudeHooks:
         result = translate_claude_hooks(settings)
         assert len(result) == 1
         assert result[0].event == "PreToolUse"
-        assert result[0].matcher == "Bash"
+        assert result[0].matcher == "Shell"  # translated from Bash
         assert result[0].command == "/home/user/.claude/hooks/rtk-rewrite.sh"
 
     def test_basic_pre_tool_use(self):
@@ -284,7 +284,7 @@ class TestTranslateClaudeHooks:
         assert len(result) == 1
         hook = result[0]
         assert hook.event == "PreToolUse"
-        assert hook.matcher == "Bash|Write"
+        assert hook.matcher == "Shell|WriteFile"  # translated from Bash|Write
         assert hook.command == "/usr/local/bin/audit.sh"
         assert hook.timeout == 10
 

@@ -6,6 +6,10 @@ These tests verify the full pipeline:
 This is the critical path: we're proving that a hook defined in Claude Code's
 format actually fires, receives the correct stdin JSON, and returns the
 correct allow/block decision through kimi's engine.
+
+Tool name translation: Claude Code uses different tool names than kimi:
+  Bash → Shell, Write → WriteFile, Edit → StrReplaceFile, Read → ReadFile
+Hook matchers are automatically translated so they match kimi's tool names.
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ async def test_claude_hook_allow_through_engine():
     settings = {
         "PreToolUse": [
             {
-                "matcher": "Shell",
+                "matcher": "Bash",  # Claude name → translated to "Shell"
                 "hooks": [
                     {"type": "command", "command": "exit 0", "timeout": 5}
                 ],
@@ -41,6 +45,7 @@ async def test_claude_hook_allow_through_engine():
     hook_defs = translate_claude_hooks(settings)
     engine = HookEngine(hook_defs)
 
+    # Trigger with kimi's tool name
     results = await engine.trigger(
         "PreToolUse",
         matcher_value="Shell",
@@ -56,7 +61,7 @@ async def test_claude_hook_block_through_engine():
     settings = {
         "PreToolUse": [
             {
-                "matcher": "Shell",
+                "matcher": "Bash",
                 "hooks": [
                     {
                         "type": "command",
@@ -93,7 +98,7 @@ async def test_claude_hook_json_deny_through_engine():
     settings = {
         "PreToolUse": [
             {
-                "matcher": "Write|Edit",
+                "matcher": "Write|Edit",  # → WriteFile|StrReplaceFile
                 "hooks": [
                     {
                         "type": "command",
@@ -110,8 +115,8 @@ async def test_claude_hook_json_deny_through_engine():
 
     results = await engine.trigger(
         "PreToolUse",
-        matcher_value="Write",
-        input_data={"tool_name": "Write", "tool_input": {"file_path": "/etc/passwd"}},
+        matcher_value="WriteFile",  # kimi's tool name
+        input_data={"tool_name": "WriteFile", "tool_input": {"file_path": "/etc/passwd"}},
     )
     assert len(results) == 1
     assert results[0].action == "block"
@@ -119,12 +124,12 @@ async def test_claude_hook_json_deny_through_engine():
 
 
 @pytest.mark.asyncio
-async def test_claude_hook_matcher_filters_correctly():
-    """Matcher from Claude Code settings correctly filters tool names."""
+async def test_claude_hook_matcher_translates_tool_names():
+    """Claude Code tool names in matchers are translated to kimi equivalents."""
     settings = {
         "PreToolUse": [
             {
-                "matcher": "Shell|Bash",
+                "matcher": "Bash|Write",  # → Shell|WriteFile
                 "hooks": [
                     {"type": "command", "command": "echo matched", "timeout": 5}
                 ],
@@ -135,7 +140,7 @@ async def test_claude_hook_matcher_filters_correctly():
     hook_defs = translate_claude_hooks(settings)
     engine = HookEngine(hook_defs)
 
-    # Should match
+    # "Shell" should match (translated from "Bash")
     results = await engine.trigger(
         "PreToolUse",
         matcher_value="Shell",
@@ -143,15 +148,15 @@ async def test_claude_hook_matcher_filters_correctly():
     )
     assert len(results) == 1
 
-    # Should also match
+    # "WriteFile" should match (translated from "Write")
     results = await engine.trigger(
         "PreToolUse",
-        matcher_value="Bash",
-        input_data={"tool_name": "Bash"},
+        matcher_value="WriteFile",
+        input_data={"tool_name": "WriteFile"},
     )
     assert len(results) == 1
 
-    # Should NOT match
+    # "ReadFile" should NOT match
     results = await engine.trigger(
         "PreToolUse",
         matcher_value="ReadFile",
@@ -166,11 +171,10 @@ async def test_claude_hook_receives_correct_stdin():
     settings = {
         "PreToolUse": [
             {
-                "matcher": "Shell",
+                "matcher": "Bash",
                 "hooks": [
                     {
                         "type": "command",
-                        # Read stdin, extract tool_name, print it
                         "command": """python3 -c "import sys,json; d=json.load(sys.stdin); print(d['tool_name'])" """,
                         "timeout": 5,
                     }
@@ -214,7 +218,7 @@ async def test_claude_hook_script_blocks_dangerous_commands():
         settings = {
             "PreToolUse": [
                 {
-                    "matcher": "Shell|Bash",
+                    "matcher": "Bash",  # → Shell
                     "hooks": [
                         {
                             "type": "command",
@@ -256,13 +260,13 @@ async def test_claude_multiple_event_hooks_coexist():
     settings = {
         "PreToolUse": [
             {
-                "matcher": "Shell",
+                "matcher": "Bash",
                 "hooks": [{"type": "command", "command": "echo pre", "timeout": 5}],
             }
         ],
         "PostToolUse": [
             {
-                "matcher": "Shell",
+                "matcher": "Bash",
                 "hooks": [{"type": "command", "command": "echo post", "timeout": 5}],
             }
         ],
@@ -302,11 +306,11 @@ async def test_claude_hooks_added_to_existing_engine():
     native_hook = HookDef(event="PreToolUse", matcher="Shell", command="echo native", timeout=5)
     engine = HookEngine([native_hook])
 
-    # Add Claude Code hooks
+    # Add Claude Code hooks (uses Claude name "Bash" → translated to "Shell")
     claude_settings = {
         "PreToolUse": [
             {
-                "matcher": "Shell",
+                "matcher": "Bash",
                 "hooks": [{"type": "command", "command": "echo claude", "timeout": 5}],
             }
         ]
@@ -314,7 +318,7 @@ async def test_claude_hooks_added_to_existing_engine():
     claude_hooks = translate_claude_hooks(claude_settings)
     engine.add_hooks(claude_hooks)
 
-    # Both should fire
+    # Both should fire for "Shell"
     results = await engine.trigger("PreToolUse", matcher_value="Shell", input_data={})
     assert len(results) == 2
     outputs = {r.stdout.strip() for r in results}
@@ -329,7 +333,6 @@ async def test_full_pipeline_settings_to_engine(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """Full pipeline: write settings.json, load compat, feed hooks to engine."""
-    # Set up a fake ~/.claude with settings.json
     fake_claude_home = tmp_path / ".claude_home"
     fake_claude_home.mkdir()
     monkeypatch.setattr(
@@ -339,7 +342,6 @@ async def test_full_pipeline_settings_to_engine(
         "kimi_cli.compat.claude_code.memory.CLAUDE_HOME", fake_claude_home
     )
 
-    # Create project dir with .claude/settings.json
     project = tmp_path / "myproject"
     project.mkdir()
     project_claude = project / ".claude"
@@ -347,35 +349,37 @@ async def test_full_pipeline_settings_to_engine(
     (project_claude / "settings.json").write_text(
         json.dumps(
             {
-                "PreToolUse": [
-                    {
-                        "matcher": "Bash",
-                        "hooks": [
-                            {
-                                "type": "command",
-                                "command": "echo project-hook-fired",
-                                "timeout": 5,
-                            }
-                        ],
-                    }
-                ]
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Bash",
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "echo project-hook-fired",
+                                    "timeout": 5,
+                                }
+                            ],
+                        }
+                    ]
+                }
             }
         )
     )
 
-    # Force compat enabled
     monkeypatch.setenv("KIMI_CLAUDE_CODE_COMPAT", "1")
 
     compat = load_claude_code_compat(project)
     assert compat.enabled
     assert len(compat.extra_hooks) == 1
+    assert compat.extra_hooks[0].matcher == "Shell"  # translated from Bash
 
-    # Feed into engine and trigger
+    # Feed into engine and trigger with kimi's tool name
     engine = HookEngine(compat.extra_hooks)
     results = await engine.trigger(
         "PreToolUse",
-        matcher_value="Bash",
-        input_data={"tool_name": "Bash", "tool_input": {"command": "echo hello"}},
+        matcher_value="Shell",
+        input_data={"tool_name": "Shell", "tool_input": {"command": "echo hello"}},
     )
     assert len(results) == 1
     assert results[0].stdout.strip() == "project-hook-fired"
@@ -393,7 +397,7 @@ async def test_claude_hooks_fire_wire_callbacks():
     settings = {
         "PreToolUse": [
             {
-                "matcher": "Shell",
+                "matcher": "Bash",
                 "hooks": [{"type": "command", "command": "exit 0", "timeout": 5}],
             }
         ]
