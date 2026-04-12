@@ -332,6 +332,26 @@ class KimiCLI:
                 count=len(claude_compat.extra_hooks),
             )
 
+        # Wire up hook visibility callbacks for shell UI
+        def _on_hook_resolved(
+            event: str, target: str, action: str, reason: str, duration_ms: int
+        ) -> None:
+            try:
+                from kimi_cli.ui.shell.prompt import toast
+
+                label = f"[hook] {event}"
+                if target:
+                    label += f"({target})"
+                label += f" → {action}"
+                if reason:
+                    label += f": {reason}"
+                label += f" [{duration_ms}ms]"
+                toast(label, duration=3.0, topic="hook_resolved")
+            except Exception:
+                pass
+
+        hook_engine.set_callbacks(on_resolved=_on_hook_resolved)
+
         soul.set_hook_engine(hook_engine)
         runtime.hook_engine = hook_engine
 

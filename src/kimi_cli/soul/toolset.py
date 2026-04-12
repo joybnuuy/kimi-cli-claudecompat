@@ -289,7 +289,7 @@ class KimiToolset:
                             ),
                         )
 
-                # Apply updatedInput from hooks (e.g., RTK command rewriting)
+                # Apply updatedInput and surface systemMessage from hooks
                 effective_arguments = arguments
                 for result in results:
                     if result.updated_input is not None:
@@ -302,6 +302,18 @@ class KimiToolset:
                             tool_call.function.name,
                             result.updated_input,
                         )
+                    if result.system_message:
+                        try:
+                            from kimi_cli.ui.shell.prompt import toast
+
+                            toast(
+                                f"[hook] {result.system_message}",
+                                duration=5.0,
+                                topic="hook_system_message",
+                            )
+                        except Exception:
+                            pass  # toast unavailable outside shell UI
+                        logger.info("Hook system message: {}", result.system_message)
 
                 # --- Execute tool ---
                 t0 = time.monotonic()
