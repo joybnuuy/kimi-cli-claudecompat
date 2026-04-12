@@ -322,6 +322,16 @@ class KimiCLI:
         from kimi_cli.hooks.engine import HookEngine
 
         hook_engine = HookEngine(config.hooks, cwd=str(session.work_dir))
+
+        # Add Claude Code hooks if compatibility layer is active
+        claude_compat = getattr(runtime, "claude_code_compat", None)
+        if claude_compat and claude_compat.extra_hooks:
+            hook_engine.add_hooks(claude_compat.extra_hooks)
+            logger.info(
+                "Added {count} Claude Code hook(s) to engine",
+                count=len(claude_compat.extra_hooks),
+            )
+
         soul.set_hook_engine(hook_engine)
         runtime.hook_engine = hook_engine
 

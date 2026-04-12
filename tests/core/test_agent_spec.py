@@ -43,6 +43,7 @@ def test_load_default_agent_spec():
             "kimi_cli.tools.web:FetchURL",
             "kimi_cli.tools.plan:ExitPlanMode",
             "kimi_cli.tools.plan.enter:EnterPlanMode",
+            "kimi_cli.tools.claude_memory:ClaudeMemory",
         ]
     )
     subagents = {
@@ -114,6 +115,7 @@ def test_load_default_agent_spec():
             "kimi_cli.tools.web:FetchURL",
             "kimi_cli.tools.plan:ExitPlanMode",
             "kimi_cli.tools.plan.enter:EnterPlanMode",
+            "kimi_cli.tools.claude_memory:ClaudeMemory",
         ]
     )
     sub_subagents = {
@@ -197,6 +199,7 @@ You are meant to be a fast agent. Complete the search request efficiently and re
             "kimi_cli.tools.web:FetchURL",
             "kimi_cli.tools.plan:ExitPlanMode",
             "kimi_cli.tools.plan.enter:EnterPlanMode",
+            "kimi_cli.tools.claude_memory:ClaudeMemory",
         ]
     )
     sub_subagents = {
@@ -264,6 +267,7 @@ Before designing your implementation plan, consider whether you fully understand
             "kimi_cli.tools.web:FetchURL",
             "kimi_cli.tools.plan:ExitPlanMode",
             "kimi_cli.tools.plan.enter:EnterPlanMode",
+            "kimi_cli.tools.claude_memory:ClaudeMemory",
         ]
     )
     sub_subagents = {
@@ -360,6 +364,7 @@ agent:
                 "kimi_cli.tools.web:FetchURL",
                 "kimi_cli.tools.plan:ExitPlanMode",
                 "kimi_cli.tools.plan.enter:EnterPlanMode",
+                "kimi_cli.tools.claude_memory:ClaudeMemory",
             ]
         )
         assert spec.exclude_tools == snapshot(
