@@ -116,6 +116,25 @@ def _cleanup_stale_foreground_subagents(runtime: Runtime) -> None:
         subagent_store.update_instance(agent_id, status="failed")
 
 
+def _extract_domain(base_url: str) -> str:
+    """Extract the registrable domain from a base URL.
+
+    'https://api.moonshot.ai/v1' → 'moonshot.ai'
+    'https://api.anthropic.com'  → 'anthropic.com'
+    """
+    if not base_url:
+        return ""
+    try:
+        from urllib.parse import urlparse
+
+        host = urlparse(base_url).hostname or ""
+        parts = host.split(".")
+        # Return last two parts (e.g., moonshot.ai, anthropic.com)
+        return ".".join(parts[-2:]) if len(parts) >= 2 else host
+    except Exception:
+        return ""
+
+
 class KimiCLI:
     @staticmethod
     async def create(
@@ -263,6 +282,8 @@ class KimiCLI:
             afk=afk,
             runtime_afk=runtime_afk,
             skills_dirs=skills_dirs,
+            model_name=model.model if model else "",
+            provider_uri=_extract_domain(provider.base_url) if provider else "",
         )
         runtime.ui_mode = ui_mode
         runtime.resumed = resumed

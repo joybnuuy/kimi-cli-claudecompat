@@ -64,6 +64,10 @@ class BuiltinSystemPromptArgs:
     """The operating system kind, e.g. 'Windows', 'macOS', 'Linux'."""
     KIMI_SHELL: str
     """The shell executable used by the Shell tool, e.g. 'bash (`/bin/bash`)'."""
+    KIMI_MODEL_NAME: str
+    """The LLM model name, e.g. 'kimi-k2.5', 'claude-sonnet-4-20250514'."""
+    KIMI_PROVIDER_URI: str
+    """The domain of the LLM provider, e.g. 'moonshot.ai', 'anthropic.com'."""
 
 
 _AGENTS_MD_MAX_BYTES = 32 * 1024  # 32 KiB
@@ -221,6 +225,8 @@ class Runtime:
         afk: bool = False,
         runtime_afk: bool = False,
         skills_dirs: list[KaosPath] | None = None,
+        model_name: str = "",
+        provider_uri: str = "",
     ) -> Runtime:
         ls_output, agents_md, environment = await asyncio.gather(
             list_directory(session.work_dir),
@@ -343,6 +349,8 @@ class Runtime:
                 KIMI_ADDITIONAL_DIRS_INFO=additional_dirs_info,
                 KIMI_OS=environment.os_kind,
                 KIMI_SHELL=f"{environment.shell_name} (`{environment.shell_path}`)",
+                KIMI_MODEL_NAME=model_name or (llm.model_name if llm else "unknown"),
+                KIMI_PROVIDER_URI=provider_uri,
             ),
             denwa_renji=DenwaRenji(),
             approval=Approval(state=approval_state),
