@@ -49,8 +49,9 @@ _DIRECT_EVENT_MAP: dict[str, str] = {
 def translate_claude_hooks(settings: dict[str, Any]) -> list[HookDef]:
     """Extract hook definitions from Claude Code settings and convert to kimi HookDefs.
 
-    Handles both the top-level hook format (used in settings.json) and
-    the nested hooks.json format (used in plugins).
+    Handles both formats:
+    - Top-level: {"PreToolUse": [...]} (used in some settings.json variants)
+    - Nested: {"hooks": {"PreToolUse": [...]}} (standard settings.json format)
 
     Args:
         settings: Merged Claude Code settings dict.
@@ -60,8 +61,23 @@ def translate_claude_hooks(settings: dict[str, Any]) -> list[HookDef]:
     """
     hook_defs: list[HookDef] = []
 
+    # Claude Code settings.json wraps hooks in a "hooks" key
+    hooks_section = settings.get("hooks")
+    if isinstance(hooks_section, dict):
+        hook_defs.extend(_extract_hooks(hooks_section))
+
+    # Also check top-level (some formats put events directly at root)
+    hook_defs.extend(_extract_hooks(settings))
+
+    return hook_defs
+
+
+def _extract_hooks(source: dict[str, Any]) -> list[HookDef]:
+    """Extract hook definitions from a dict that has event names as keys."""
+    hook_defs: list[HookDef] = []
+
     for event_name in HOOK_EVENT_TYPES:
-        raw_matchers = settings.get(event_name)
+        raw_matchers = source.get(event_name)
         if not isinstance(raw_matchers, list):
             continue
 

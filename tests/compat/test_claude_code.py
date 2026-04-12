@@ -242,6 +242,29 @@ class TestTranslateClaudeHooks:
         result = translate_claude_hooks({})
         assert result == []
 
+    def test_nested_hooks_key(self):
+        """Real settings.json format: hooks are nested under a 'hooks' key."""
+        settings = {
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "/home/user/.claude/hooks/rtk-rewrite.sh",
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+        result = translate_claude_hooks(settings)
+        assert len(result) == 1
+        assert result[0].event == "PreToolUse"
+        assert result[0].matcher == "Bash"
+        assert result[0].command == "/home/user/.claude/hooks/rtk-rewrite.sh"
+
     def test_basic_pre_tool_use(self):
         settings = {
             "PreToolUse": [
