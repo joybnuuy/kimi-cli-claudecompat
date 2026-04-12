@@ -158,8 +158,7 @@ class Kimi:
         messages: list[ChatCompletionMessageParam] = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
-        thinking_on = self._is_thinking_enabled()
-        messages.extend(_convert_message(message, thinking_enabled=thinking_on) for message in history)
+        messages.extend(_convert_message(message) for message in history)
 
         generation_kwargs: dict[str, Any] = {
             # default kimi generation kwargs
@@ -248,14 +247,6 @@ class Kimi:
         new_self._generation_kwargs["extra_body"] = new_extra_body
         return new_self
 
-    def _is_thinking_enabled(self) -> bool:
-        """Check if thinking/reasoning is currently enabled."""
-        extra_body = self._generation_kwargs.get("extra_body")
-        if extra_body and extra_body.get("thinking", {}).get("type") == "enabled":
-            return True
-        reasoning_effort = self._generation_kwargs.get("reasoning_effort")
-        return reasoning_effort is not None and reasoning_effort != "off"
-
     @property
     def model_parameters(self) -> dict[str, Any]:
         """
@@ -313,7 +304,7 @@ def _guess_filename(mime_type: str) -> str:
     return f"upload{extension}"
 
 
-def _convert_message(message: Message, *, thinking_enabled: bool = False) -> ChatCompletionMessageParam:
+def _convert_message(message: Message) -> ChatCompletionMessageParam:
     message = message.model_copy(deep=True)
     reasoning_content: str = ""
     content: list[ContentPart] = []
@@ -338,11 +329,6 @@ def _convert_message(message: Message, *, thinking_enabled: bool = False) -> Cha
         dumped_message.pop("content", None)
     if reasoning_content:
         dumped_message["reasoning_content"] = reasoning_content
-    elif thinking_enabled and message.role == "assistant":
-        # When thinking is enabled, the API requires reasoning_content on all
-        # assistant messages, including tool-call-only messages that have no
-        # actual thinking output.
-        dumped_message["reasoning_content"] = ""
     return cast(ChatCompletionMessageParam, dumped_message)
 
 
