@@ -18,6 +18,12 @@ from kimi_cli.compat.claude_code.memory import (
     _parse_memory_frontmatter,
     load_claude_memories,
 )
+from kimi_cli.compat.claude_code.mcp import (
+    _convert_claude_mcp_server_to_fastmcp,
+    convert_claude_mcp_to_fastmcp,
+    load_claude_mcp_settings,
+    load_claude_mcp_config,
+)
 from kimi_cli.compat.claude_code.settings import _deep_merge, load_claude_settings
 
 
@@ -396,3 +402,283 @@ class TestTranslatePluginHooks:
         result = translate_plugin_hooks(hooks_config)
         assert len(result) == 1
         assert result[0].command == "flat.sh"
+
+
+# ─── MCP Settings ────────────────────────────────────────────────────────────
+
+
+class TestConvertClaudeMcpServer:
+    """Tests for _convert_claude_mcp_server_to_fastmcp function."""
+
+    def test_http_server_conversion(self):
+        config = {
+            "type": "http",
+            "url": "https://api.githubcopilot.com/mcp/",
+            "headers": {"Authorization": "Bearer token"},
+        }
+        result = _convert_claude_mcp_server_to_fastmcp("github", config)
+        assert result == {
+            "url": "https://api.githubcopilot.com/mcp/",
+            "transport": "http",
+            "headers": {"Authorization": "Bearer token"},
+        }
+
+    def test_http_server_with_auth(self):
+        config = {
+            "type": "http",
+            "url": "https://mcp.example.com/",
+            "headers": {"X-API-Key": "secret"},
+            "auth": "oauth",
+        }
+        result = _convert_claude_mcp_server_to_fastmcp("example", config)
+        assert result["transport"] == "http"
+        assert result["auth"] == "oauth"
+
+    def test_sse_server_conversion(self):
+        config = {
+            "type": "sse",
+            "url": "https://mcp.example.com/sse",
+            "headers": {"Accept": "text/event-stream"},
+        }
+        result = _convert_claude_mcp_server_to_fastmcp("sse-server", config)
+        assert result == {
+            "url": "https://mcp.example.com/sse",
+            "transport": "sse",
+            "headers": {"Accept": "text/event-stream"},
+        }
+
+    def test_stdio_server_conversion(self):
+        config = {
+            "type": "stdio",
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+            "env": {"FOO": "bar"},
+        }
+        result = _convert_claude_mcp_server_to_fastmcp("filesystem", config)
+        assert result == {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+            "env": {"FOO": "bar"},
+        }
+
+    def test_stdio_server_minimal(self):
+        config = {"type": "stdio", "command": "python", "args": ["server.py"]}
+        result = _convert_claude_mcp_server_to_fastmcp("minimal", config)
+        assert result == {"command": "python", "args": ["server.py"]}
+
+    def test_default_to_stdio(self):
+        """When type is missing, default to stdio."""
+        config = {"command": "python", "args": ["server.py"]}
+        result = _convert_claude_mcp_server_to_fastmcp("default-stdio", config)
+        assert result["command"] == "python"
+        assert "transport" not in result  # stdio doesn't need transport key
+
+    def test_websocket_returns_none(self, caplog):
+        """WebSocket transport returns None with warning (not supported by fastmcp)."""
+        config = {"type": "ws", "url": "wss://example.com/mcp"}
+        result = _convert_claude_mcp_server_to_fastmcp("ws-server", config)
+        assert result is None
+
+
+class TestConvertClaudeMcpToFastmcp:
+    """Tests for convert_claude_mcp_to_fastmcp function."""
+
+    def test_empty_config(self):
+        result = convert_claude_mcp_to_fastmcp({})
+        assert result == {"mcpServers": {}}
+
+    def test_none_config(self):
+        result = convert_claude_mcp_to_fastmcp(None)  # type: ignore[arg-type]
+        assert result == {"mcpServers": {}}
+
+    def test_full_config_conversion(self):
+        claude_mcp = {
+            "mcpServers": {
+                "github": {
+                    "type": "http",
+                    "url": "https://api.githubcopilot.com/mcp/",
+                    "headers": {"Authorization": "Bearer token"},
+                },
+                "filesystem": {
+                    "type": "stdio",
+                    "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+                },
+            }
+        }
+        result = convert_claude_mcp_to_fastmcp(claude_mcp)
+        assert "mcpServers" in result
+        assert "github" in result["mcpServers"]
+        assert "filesystem" in result["mcpServers"]
+        assert result["mcpServers"]["github"]["transport"] == "http"
+        assert result["mcpServers"]["filesystem"]["command"] == "npx"
+
+
+class TestLoadClaudeMcpSettings:
+    """Tests for load_claude_mcp_settings function."""
+
+    def test_no_mcp_settings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """When no settings files exist, return empty dict."""
+        # Mock CLAUDE_HOME
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.mcp.CLAUDE_HOME", tmp_path / ".claude_fake"
+        )
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.settings.CLAUDE_HOME", tmp_path / ".claude_fake"
+        )
+        # Also mock the home directory for ~/.claude.json
+        fake_claude_json = tmp_path / "nonexistent_claude.json"
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.mcp._load_claude_json",
+            lambda path=None: None
+        )
+        result = load_claude_mcp_settings(tmp_path)
+        assert result == {}
+
+    def test_loads_from_global_settings(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Load MCP settings from ~/.claude/settings.json."""
+        claude_home = tmp_path / ".claude"
+        claude_home.mkdir()
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.mcp.CLAUDE_HOME", claude_home
+        )
+
+        settings = {"mcpServers": {"server1": {"type": "http", "url": "https://example.com"}}}
+        (claude_home / "settings.json").write_text(json.dumps(settings))
+
+        result = load_claude_mcp_settings(tmp_path)
+        assert "mcpServers" in result
+        assert "server1" in result["mcpServers"]
+
+    def test_merges_layers(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """MCP settings from different layers are merged."""
+        # Use separate directories for global and project to avoid conflicts
+        global_home = tmp_path / "global_claude"
+        global_home.mkdir()
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.mcp.CLAUDE_HOME", global_home
+        )
+
+        # Global settings
+        global_settings = {"mcpServers": {"global-server": {"type": "http", "url": "https://global.com"}}}
+        (global_home / "settings.json").write_text(json.dumps(global_settings))
+
+        # Project settings
+        project_claude = tmp_path / ".claude"
+        project_claude.mkdir()
+        project_settings = {"mcpServers": {"project-server": {"type": "stdio", "command": "python"}}}
+        (project_claude / "settings.json").write_text(json.dumps(project_settings))
+
+        result = load_claude_mcp_settings(tmp_path)
+        assert "global-server" in result["mcpServers"]
+        assert "project-server" in result["mcpServers"]
+
+    def test_project_overrides_global(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Project settings override global settings for same server."""
+        global_home = tmp_path / "global_claude"
+        global_home.mkdir()
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.mcp.CLAUDE_HOME", global_home
+        )
+
+        # Global settings
+        global_settings = {"mcpServers": {"shared": {"type": "http", "url": "https://global.com"}}}
+        (global_home / "settings.json").write_text(json.dumps(global_settings))
+
+        # Project settings with same server name
+        project_claude = tmp_path / ".claude"
+        project_claude.mkdir()
+        project_settings = {"mcpServers": {"shared": {"type": "http", "url": "https://project.com"}}}
+        (project_claude / "settings.json").write_text(json.dumps(project_settings))
+
+        result = load_claude_mcp_settings(tmp_path)
+        # Project URL should win
+        assert result["mcpServers"]["shared"]["url"] == "https://project.com"
+
+
+class TestLoadClaudeMcpFromClaudeJson:
+    """Tests for loading MCP from ~/.claude.json (primary location)."""
+
+    def test_loads_from_claude_json_global(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Load global MCP settings from ~/.claude.json."""
+        # Mock CLAUDE_HOME to avoid interference
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.mcp.CLAUDE_HOME", tmp_path / ".claude_fake"
+        )
+        
+        # Mock _load_claude_json to return test data
+        def mock_load_claude_json(path=None):
+            return {
+                "mcpServers": {
+                    "openviking": {
+                        "type": "stdio",
+                        "command": "python3",
+                        "args": ["/path/to/server.py"]
+                    }
+                }
+            }
+        
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.mcp._load_claude_json",
+            mock_load_claude_json
+        )
+        
+        result = load_claude_mcp_settings(tmp_path)
+        assert "mcpServers" in result
+        assert "openviking" in result["mcpServers"]
+        assert result["mcpServers"]["openviking"]["type"] == "stdio"
+
+    def test_loads_project_specific_from_claude_json(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Load project-specific MCP settings from ~/.claude.json."""
+        work_dir_str = str(tmp_path)
+        
+        def mock_load_claude_json(path=None):
+            return {
+                "mcpServers": {
+                    "global-server": {"type": "http", "url": "https://global.com"}
+                },
+                "projects": {
+                    work_dir_str: {
+                        "mcpServers": {
+                            "project-server": {"type": "stdio", "command": "python"}
+                        }
+                    }
+                }
+            }
+        
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.mcp._load_claude_json",
+            mock_load_claude_json
+        )
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.mcp.CLAUDE_HOME", tmp_path / ".claude_fake"
+        )
+        
+        result = load_claude_mcp_settings(tmp_path)
+        assert "global-server" in result["mcpServers"]
+        assert "project-server" in result["mcpServers"]
+
+
+class TestLoadClaudeMcpConfig:
+    """Tests for load_claude_mcp_config function."""
+
+    def test_returns_list_of_configs(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Returns list of config dicts compatible with fastmcp.MCPConfig."""
+        claude_home = tmp_path / ".claude"
+        claude_home.mkdir()
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.mcp.CLAUDE_HOME", claude_home
+        )
+        # Also mock ~/.claude.json to not interfere
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.mcp._load_claude_json",
+            lambda path=None: None
+        )
+
+        settings = {"mcpServers": {"server1": {"type": "http", "url": "https://example.com"}}}
+        (claude_home / "settings.json").write_text(json.dumps(settings))
+
+        result = load_claude_mcp_config(tmp_path)
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert "mcpServers" in result[0]
