@@ -1,8 +1,9 @@
 """Claude Code compatibility layer for kimi-cli.
 
-Bridges Claude Code's memory system, hooks, CLAUDE.md instructions, and
-settings into kimi's existing infrastructure, so users migrating from
-Claude Code can reuse their configuration and memory without changes.
+Bridges Claude Code's memory system, hooks, CLAUDE.md instructions, MCP
+settings, and other configurations into kimi's existing infrastructure, so
+users migrating from Claude Code can reuse their configuration and memory
+without changes.
 
 Usage:
     from kimi_cli.compat.claude_code import load_claude_code_compat
@@ -11,12 +12,14 @@ Usage:
     # compat.extra_instructions -> str to append to AGENTS.md content
     # compat.extra_hooks -> list[HookDef] to add to hook engine
     # compat.memory_prompt -> str to inject into system prompt
+    # compat.mcp_configs -> list[dict] MCP configs to merge with kimi's
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 from kimi_cli.hooks.config import HookDef
 from kimi_cli.utils.logging import logger
@@ -25,7 +28,11 @@ from .config import ClaudeCodeCompatConfig
 from .hooks import translate_claude_hooks
 from .instructions import load_claude_instructions
 from .memory import load_claude_memories
+from .mcp import convert_claude_mcp_to_fastmcp, load_claude_mcp_config
 from .settings import load_claude_settings
+
+if TYPE_CHECKING:
+    from fastmcp.mcp_config import MCPConfig
 
 
 @dataclass
@@ -42,6 +49,8 @@ class ClaudeCodeCompat:
     """Memory content to inject into the system prompt."""
     settings: dict = field(default_factory=dict)
     """Raw merged Claude Code settings (for advanced use)."""
+    mcp_configs: list[dict[str, Any]] = field(default_factory=list)
+    """MCP configurations from Claude Code settings (converted to fastmcp format)."""
 
 
 def load_claude_code_compat(
@@ -56,6 +65,7 @@ def load_claude_code_compat(
     3. Loads CLAUDE.md instructions and .claude/rules/
     4. Loads memory files from ~/.claude/projects/
     5. Translates hooks from settings.json to kimi HookDef format
+    6. Loads MCP server configurations from Claude Code settings
 
     Args:
         work_dir: The project working directory.
@@ -107,5 +117,27 @@ def load_claude_code_compat(
                 logger.info("Translated {} Claude Code hook(s)", len(result.extra_hooks))
         except Exception as exc:
             logger.warning("Failed to translate Claude Code hooks: {}", exc)
+
+    # Load MCP configurations
+    if cfg.mcp:
+        try:
+            claude_mcp_configs = load_claude_mcp_config(work_dir)
+            if claude_mcp_configs:
+                # Convert to fastmcp format
+                for config in claude_mcp_configs:
+                    converted = convert_claude_mcp_to_fastmcp(config)
+                    if converted.get("mcpServers"):
+                        result.mcp_configs.append(converted)
+                if result.mcp_configs:
+                    total_servers = sum(
+                        len(cfg.get("mcpServers", {})) for cfg in result.mcp_configs
+                    )
+                    logger.info(
+                        "Loaded {} Claude Code MCP config(s) with {} server(s)",
+                        len(result.mcp_configs),
+                        total_servers,
+                    )
+        except Exception as exc:
+            logger.warning("Failed to load Claude Code MCP settings: {}", exc)
 
     return result

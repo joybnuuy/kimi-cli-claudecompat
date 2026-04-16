@@ -32,6 +32,8 @@ class ClaudeCodeCompatConfig:
     """Load CLAUDE.md and .claude/rules/ as additional project instructions."""
     memory: bool = True
     """Load Claude Code memory files and inject into system prompt."""
+    mcp: bool = True
+    """Load MCP server configurations from Claude Code settings."""
 
     @staticmethod
     def from_env_and_config(config_data: dict | None = None) -> ClaudeCodeCompatConfig:
@@ -47,6 +49,7 @@ class ClaudeCodeCompatConfig:
                 cfg.hooks = False
                 cfg.instructions = False
                 cfg.memory = False
+                cfg.mcp = False
                 return cfg
 
         # Config dict overrides
@@ -57,6 +60,7 @@ class ClaudeCodeCompatConfig:
                 cfg.hooks = False
                 cfg.instructions = False
                 cfg.memory = False
+                cfg.mcp = False
                 return cfg
             if "hooks" in config_data:
                 cfg.hooks = bool(config_data["hooks"])
@@ -64,6 +68,8 @@ class ClaudeCodeCompatConfig:
                 cfg.instructions = bool(config_data["instructions"])
             if "memory" in config_data:
                 cfg.memory = bool(config_data["memory"])
+            if "mcp" in config_data:
+                cfg.mcp = bool(config_data["mcp"])
 
         # Auto-detect: enable only if ~/.claude exists
         claude_home = os.path.expanduser("~/.claude")
@@ -73,5 +79,6 @@ class ClaudeCodeCompatConfig:
             cfg.hooks = False
             cfg.instructions = False
             cfg.memory = False
+            cfg.mcp = False
 
         return cfg
