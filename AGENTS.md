@@ -44,6 +44,11 @@ shell UI, ACP server mode for IDE integrations, and MCP tool loading.
   and runs tool calls. Built-in tools live in `src/kimi_cli/tools/` (agent, shell, file, web,
   todo, background, dmail, think, plan). MCP tools are loaded via `fastmcp`; CLI management is
   in `src/kimi_cli/mcp.py` and stored in the share dir.
+- **Claude Code compatibility**: `src/kimi_cli/compat/claude_code/` bridges Claude Code's
+  settings (hooks, MCP servers, memory), CLAUDE.md instructions, and project rules into kimi-cli.
+  Auto-enabled when `~/.claude` exists; toggle via `KIMI_CLAUDE_CODE_COMPAT=0/1` or config
+  `[claude_code]` section. Supports: hooks → kimi hooks, mcpServers → MCP configs, memory →
+  system prompt injection, CLAUDE.md/rules → AGENTS.md merge.
 - **Subagents**: `LaborMarket` in `src/kimi_cli/soul/agent.py` registers builtin subagent types.
   The `Agent` tool (`src/kimi_cli/tools/agent/`) creates or resumes subagent instances, while
   `SubagentStore` persists instance metadata, prompts, wire logs, and context under
