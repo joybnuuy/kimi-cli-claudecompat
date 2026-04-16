@@ -35,16 +35,58 @@ def _load_mcp_config() -> dict[str, Any]:
     return config
 
 
+def _load_claude_compat_mcp_config(work_dir: Path | None = None) -> dict[str, Any]:
+    """Load MCP config from Claude Code compatibility layer.
+    
+    Returns merged MCP servers from ~/.claude.json and project settings.
+    """
+    from kimi_cli.compat.claude_code import load_claude_code_compat
+    
+    if work_dir is None:
+        work_dir = Path.cwd()
+    
+    try:
+        compat = load_claude_code_compat(work_dir)
+        if not compat.enabled or not compat.mcp_configs:
+            return {"mcpServers": {}}
+        
+        # Merge all compat MCP configs
+        merged: dict[str, Any] = {"mcpServers": {}}
+        for cfg in compat.mcp_configs:
+            servers = cfg.get("mcpServers", {})
+            if servers:
+                merged["mcpServers"].update(servers)
+        
+        return merged
+    except Exception:
+        # Silently fail if compat layer fails to load
+        return {"mcpServers": {}}
+
+
 def _save_mcp_config(config: dict[str, Any]) -> None:
     """Save MCP config to default file."""
     mcp_file = get_global_mcp_config_file()
     mcp_file.write_text(json.dumps(config, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def _get_mcp_server(name: str, *, require_remote: bool = False) -> dict[str, Any]:
-    """Get MCP server config by name."""
+def _get_mcp_server(name: str, *, require_remote: bool = False, include_compat: bool = True) -> dict[str, Any]:
+    """Get MCP server config by name.
+    
+    Args:
+        name: Server name
+        require_remote: If True, require the server to have a URL (HTTP/SSE)
+        include_compat: If True, also search Claude Code compat MCP servers
+    """
     config = _load_mcp_config()
-    servers = config.get("mcpServers", {})
+    servers = dict(config.get("mcpServers", {}))
+    
+    # Also check compat servers if not found in main config
+    if include_compat and name not in servers:
+        compat_config = _load_claude_compat_mcp_config()
+        compat_servers = compat_config.get("mcpServers", {})
+        if name in compat_servers:
+            servers[name] = compat_servers[name]
+    
     if name not in servers:
         typer.echo(f"MCP server '{name}' not found.", err=True)
         raise typer.Exit(code=1)
@@ -221,11 +263,33 @@ def _has_oauth_tokens(server_url: str) -> bool:
 
 
 @cli.command("list")
-def mcp_list():
-    """List all MCP servers."""
+def mcp_list(
+    hide_compat: Annotated[
+        bool,
+        typer.Option(
+            "--hide-compat",
+            help="Hide Claude Code compatibility MCP servers.",
+        ),
+    ] = False,
+):
+    """List all MCP servers (including Claude Code compat by default)."""
+    from pathlib import Path
+    
     config_file = get_global_mcp_config_file()
     config = _load_mcp_config()
-    servers: dict[str, Any] = config.get("mcpServers", {})
+    servers: dict[str, Any] = dict(config.get("mcpServers", {}))
+    
+    # Track which servers are from compat layer
+    compat_servers: set[str] = set()
+    
+    # Load and merge Claude Code compat MCP servers
+    if not hide_compat:
+        compat_config = _load_claude_compat_mcp_config()
+        compat_mcp_servers = compat_config.get("mcpServers", {})
+        for name, server in compat_mcp_servers.items():
+            if name not in servers:
+                servers[name] = server
+                compat_servers.add(name)
 
     typer.echo(f"MCP config file: {config_file}")
     if not servers:
@@ -233,6 +297,9 @@ def mcp_list():
         return
 
     for name, server in servers.items():
+        # Mark compat servers
+        compat_marker = " [compat]" if name in compat_servers else ""
+        
         if "command" in server:
             cmd = server["command"]
             cmd_args = " ".join(server.get("args", []))
@@ -246,7 +313,8 @@ def mcp_list():
                 line += " [authorization required - run: kimi mcp auth " + name + "]"
         else:
             line = f"{name}: {server}"
-        typer.echo(f"  {line}")
+        
+        typer.echo(f"  {line}{compat_marker}")
 
 
 @cli.command("auth")
