@@ -77,57 +77,6 @@ async def compact(soul: KimiSoul, args: str):
     )
 
 
-@registry.command
-async def cavecompress(soul: KimiSoul, args: str):
-    """Compress context to caveman speak (brutally shortened). Args: 'auto on'/'auto off' to toggle auto-mode."""
-    if soul.context.n_checkpoints == 0:
-        wire_send(TextPart(text="The context is empty."))
-        return
-
-    args_lower = args.strip().lower()
-
-    # Handle auto mode toggle
-    if args_lower == "auto on":
-        soul._runtime.config.loop_control.cavecompress_auto = True
-        interval = int(soul._runtime.config.loop_control.cavecompress_interval * 100)
-        wire_send(TextPart(text=f"Cavecompress auto mode enabled. Will trigger every {interval}% context growth."))
-        return
-    elif args_lower == "auto off":
-        soul._runtime.config.loop_control.cavecompress_auto = False
-        wire_send(TextPart(text="Cavecompress auto mode disabled."))
-        return
-
-    import os
-
-    logger.info("Running `/cavecompress`")
-    result = await soul.cavecompress_context()
-
-    stats_msg = (
-        f"🪨 Cavecompressed: {result.lines_processed} lines processed, "
-        f"{result.lines_removed} fluff removed, "
-        f"{result.lines_compressed} compressed."
-    )
-    if result.tools_wiped > 0:
-        stats_msg += f" {result.tools_wiped} tool outputs wiped."
-
-    # Show debug info if enabled
-    debug_enabled = os.getenv("KIMI_CAVECOMPRESS_DEBUG", "").lower() in ("1", "true", "yes")
-    if debug_enabled:
-        debug_dir = Path.home() / ".kimi" / "cavecompress_debug"
-        stats_msg += f"\nDebug files saved to: {debug_dir}"
-
-    wire_send(TextPart(text=stats_msg))
-
-    snap = soul.status
-    wire_send(
-        StatusUpdate(
-            context_usage=snap.context_usage,
-            context_tokens=snap.context_tokens,
-            max_context_tokens=snap.max_context_tokens,
-        )
-    )
-
-
 @registry.command(aliases=["reset"])
 async def clear(soul: KimiSoul, args: str):
     """Clear the context"""

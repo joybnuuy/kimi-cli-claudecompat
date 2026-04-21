@@ -48,8 +48,7 @@ def estimate_text_tokens(messages: Sequence[Message]) -> int:
         for part in msg.content:
             if isinstance(part, TextPart):
                 total_chars += len(part.text)
-            elif isinstance(part, ThinkPart):
-                total_chars += len(part.think)
+
     # ~4 chars per token for English; somewhat underestimates for CJK text,
     # but this is a temporary estimate that gets corrected on the next LLM call.
     return total_chars // 4
