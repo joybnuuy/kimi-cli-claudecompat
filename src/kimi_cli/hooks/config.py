@@ -15,6 +15,8 @@ HookEventType = Literal[
     "SubagentStop",
     "PreCompact",
     "PostCompact",
+    "PreCavecompress",
+    "PostCavecompress",
     "Notification",
 ]
 

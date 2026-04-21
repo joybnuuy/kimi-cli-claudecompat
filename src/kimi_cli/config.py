@@ -93,6 +93,12 @@ class LoopControl(BaseModel):
     """Context usage ratio threshold for auto-compaction. Default is 0.85 (85%).
     Auto-compaction triggers when context_tokens >= max_context_size * compaction_trigger_ratio
     or when context_tokens + reserved_context_size >= max_context_size."""
+    cavecompress_auto: bool = Field(default=False)
+    """Enable automatic caveman compression. When enabled, context is compressed to caveman
+    speak every cavecompress_interval growth. Default is False."""
+    cavecompress_interval: float = Field(default=0.2, ge=0.1, le=0.5)
+    """Context growth interval to trigger auto-cavecompress. Default is 0.2 (20%).
+    Triggers when context grows by this ratio from last compression."""
 
 
 class BackgroundConfig(BaseModel):

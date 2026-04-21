@@ -168,6 +168,7 @@ def create_llm(
                 api_key=resolved_api_key,
                 reasoning_key=reasoning_key,
                 default_headers=dict(provider.custom_headers) if provider.custom_headers else None,
+                reasoning_key="reasoning_content",
             )
         case "openai_responses":
             from kosong.contrib.chat_provider.openai_responses import OpenAIResponses
@@ -305,7 +306,7 @@ def derive_model_capabilities(model: LLMModel) -> set[ModelCapability]:
     if "thinking" in model.model.lower() or "reason" in model.model.lower():
         capabilities.update(("thinking", "always_thinking"))
     # These models support thinking but can be toggled on/off
-    elif model.model in {"kimi-for-coding", "kimi-code"}:
+    elif model.model in {"kimi-for-coding", "kimi-code", "kimi-k2.5", "kimi-k2.6"}:
         capabilities.update(("thinking", "image_in", "video_in"))
     return capabilities
 

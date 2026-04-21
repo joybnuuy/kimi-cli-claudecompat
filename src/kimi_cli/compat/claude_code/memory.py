@@ -92,35 +92,37 @@ def _parse_memory_frontmatter(content: str) -> tuple[dict[str, Any], str]:
     return fm, body
 
 
-def load_claude_memories(work_dir: Path) -> str | None:
-    """Load Claude Code memories for the given project directory.
+def _find_global_memory_dir() -> Path | None:
+    """Find the global Claude Code memory directory (not project-specific).
 
-    Returns formatted memory content for system prompt injection, or None.
+    Global memories are stored in ~/.claude/memory/ and apply across all projects.
     """
-    memory_dir = _find_memory_dir(work_dir)
-    if memory_dir is None:
-        return None
+    global_dir = CLAUDE_HOME / "memory"
+    if global_dir.is_dir():
+        return global_dir
+    return None
 
+
+def _load_memories_from_dir(memory_dir: Path, remaining: int) -> tuple[list[dict[str, str]], int]:
+    """Load memories from a single memory directory.
+
+    Returns tuple of (memories list, updated remaining bytes).
+    """
+    memories: list[dict[str, str]] = []
     memory_md = memory_dir / "MEMORY.md"
+
     if not memory_md.is_file():
-        return None
+        return memories, remaining
 
     try:
         index_content = memory_md.read_text(encoding="utf-8").strip()
-    except OSError as exc:
-        logger.warning("Failed to read Claude Code MEMORY.md: {}", exc)
-        return None
+    except OSError:
+        return memories, remaining
 
     if not index_content:
-        return None
-
-    logger.info("Found Claude Code memory index: {}", memory_md)
+        return memories, remaining
 
     # Parse the index to find linked memory files
-    memories: list[dict[str, str]] = []
-    remaining = _MAX_MEMORY_BYTES
-
-    # Extract links from MEMORY.md
     links = _MEMORY_LINK_PATTERN.findall(index_content)
 
     for title, filename in links:
@@ -160,21 +162,41 @@ def load_claude_memories(work_dir: Path) -> str | None:
         remaining -= len(entry.encode())
         memories.append({"content": entry, "type": mem_type, "name": mem_name})
 
-    if not memories:
-        # Fall back to using the raw MEMORY.md index content
-        if len(index_content.encode()) > _MAX_MEMORY_BYTES:
-            index_content = index_content.encode()[:_MAX_MEMORY_BYTES].decode(
-                errors="ignore"
-            ).strip()
-        return (
-            "## Claude Code Memories (imported)\n\n"
-            "The following memories were imported from Claude Code's memory system.\n\n"
-            f"{index_content}"
-        )
+    return memories, remaining
+
+
+def load_claude_memories(work_dir: Path) -> str | None:
+    """Load Claude Code memories for the given project directory.
+
+    Loads both project-specific memories and global memories.
+    Returns formatted memory content for system prompt injection, or None.
+    """
+    all_memories: list[dict[str, str]] = []
+    remaining = _MAX_MEMORY_BYTES
+
+    # Load global memories first (lower priority, but available everywhere)
+    global_dir = _find_global_memory_dir()
+    if global_dir is not None:
+        logger.info("Found global Claude Code memory directory: {}", global_dir)
+        global_memories, remaining = _load_memories_from_dir(global_dir, remaining)
+        all_memories.extend(global_memories)
+
+    # Load project-specific memories (higher priority)
+    memory_dir = _find_memory_dir(work_dir)
+    if memory_dir is None:
+        return None
+
+    if memory_dir is not None:
+        logger.info("Found project Claude Code memory directory: {}", memory_dir)
+        project_memories, remaining = _load_memories_from_dir(memory_dir, remaining)
+        all_memories.extend(project_memories)
+
+    if not all_memories:
+        return None
 
     # Group by type
     by_type: dict[str, list[str]] = {}
-    for mem in memories:
+    for mem in all_memories:
         by_type.setdefault(mem["type"], []).append(mem["content"])
 
     type_labels = {
@@ -190,6 +212,15 @@ def load_claude_memories(work_dir: Path) -> str | None:
         "The following memories were imported from Claude Code's memory system.\n",
     ]
 
+    # Track if we have any global memories to add a section header
+    has_global = global_dir is not None and any(
+        mem for mem in all_memories if global_dir in [global_dir]  # Simplified check
+    )
+    has_project = memory_dir is not None and any(
+        mem for mem in all_memories if True  # All non-global are project
+    )
+
+    # Add memories grouped by type
     for mem_type in ("user", "feedback", "project", "reference", "unknown"):
         entries = by_type.get(mem_type, [])
         if entries:

@@ -311,11 +311,21 @@ class KimiCLI:
         if startup_progress is not None:
             startup_progress("Loading agent...")
 
+        # Merge MCP configs: user-provided + Claude Code compat
+        merged_mcp_configs = list(mcp_configs) if mcp_configs else []
+        claude_compat = getattr(runtime, "claude_code_compat", None)
+        if claude_compat and claude_compat.mcp_configs:
+            merged_mcp_configs.extend(claude_compat.mcp_configs)
+            logger.info(
+                "Added {} Claude Code MCP config(s) to agent",
+                len(claude_compat.mcp_configs),
+            )
+
         _phase_t = time.monotonic()
         agent = await load_agent(
             agent_file,
             runtime,
-            mcp_configs=mcp_configs or [],
+            mcp_configs=merged_mcp_configs,
             start_mcp_loading=not defer_mcp_loading,
         )
         _phase_timings_ms["mcp_ms"] = int((time.monotonic() - _phase_t) * 1000)

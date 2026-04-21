@@ -170,6 +170,34 @@ def post_compact(
     }
 
 
+def pre_cavecompress(
+    *,
+    session_id: str,
+    cwd: str,
+    trigger: str,
+    token_count: int,
+) -> dict[str, Any]:
+    return {
+        **_base("PreCavecompress", session_id, cwd),
+        "trigger": trigger,
+        "token_count": token_count,
+    }
+
+
+def post_cavecompress(
+    *,
+    session_id: str,
+    cwd: str,
+    trigger: str,
+    estimated_token_count: int,
+) -> dict[str, Any]:
+    return {
+        **_base("PostCavecompress", session_id, cwd),
+        "trigger": trigger,
+        "estimated_token_count": estimated_token_count,
+    }
+
+
 def notification(
     *,
     session_id: str,

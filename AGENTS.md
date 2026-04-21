@@ -48,7 +48,8 @@ shell UI, ACP server mode for IDE integrations, and MCP tool loading.
   settings (hooks, MCP servers, memory), CLAUDE.md instructions, and project rules into kimi-cli.
   Auto-enabled when `~/.claude` exists; toggle via `KIMI_CLAUDE_CODE_COMPAT=0/1` or config
   `[claude_code]` section. Supports: hooks → kimi hooks, mcpServers → MCP configs, memory →
-  system prompt injection, CLAUDE.md/rules → AGENTS.md merge.
+  system prompt injection (project + global), CLAUDE.md/rules → AGENTS.md merge.
+  - **Global memories**: `~/.claude/memory/` for cross-project memories (scope param on ClaudeMemory tool)
 - **Subagents**: `LaborMarket` in `src/kimi_cli/soul/agent.py` registers builtin subagent types.
   The `Agent` tool (`src/kimi_cli/tools/agent/`) creates or resumes subagent instances, while
   `SubagentStore` persists instance metadata, prompts, wire logs, and context under
@@ -150,3 +151,26 @@ For the full procedure, follow the `release` skill (`.agents/skills/release/SKIL
    - `git tag 0.68` or `git tag pykaos-0.5.3`
    - `git push --tags`
 9. GitHub Actions handles the release after tags are pushed.
+
+## Claude Code Compatibility Backlog
+
+### High Priority
+
+1. **Cross-project memory search** — Search across all `~/.claude/projects/*/memory/` directories.
+2. **`systemMessage` injection** — Hook `systemMessage` currently only shown as toast; should inject into conversation context.
+
+### Medium Priority
+
+3. **Claude Code plugin loading** — Parse `installed_plugins.json` for plugin hooks/settings.
+4. **Skill for `/memory` slash command** — Add slash command equivalent for memory management.
+5. **Better memory file matching** — Unicode normalization for `_slugify()`.
+6. **Memory content versioning** — Add `created_at`/`updated_at` timestamps to frontmatter.
+
+### Low Priority / Nice to Have
+
+7. **Memory import/export** — Export all memories to single file; import from backup.
+8. **Memory sync with OpenViking** — Bridge file-based memories with vector DB.
+
+### Done ✓
+
+- **Global memories** — `~/.claude/memory/` support with `scope` parameter (project/global/all).

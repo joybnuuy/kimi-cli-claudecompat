@@ -106,8 +106,8 @@ def test_estimated_token_count_without_usage_estimates_all_from_text():
     assert result.estimated_token_count == 300 // 4
 
 
-def test_estimated_token_count_ignores_non_text_parts():
-    """Non-text parts (think, etc.) should not inflate the estimate."""
+def test_estimated_token_count_includes_thinking_parts():
+    """Thinking parts should be included in the token estimate for fair calculation."""
     messages = [
         Message(
             role="user",
@@ -119,7 +119,8 @@ def test_estimated_token_count_ignores_non_text_parts():
     ]
     result = CompactionResult(messages=messages, usage=None)
 
-    assert result.estimated_token_count == 40 // 4
+    # Both text and thinking should be counted: (40 + 1900) // 4 = 485
+    assert result.estimated_token_count == (40 + 1900) // 4
 
 
 def test_estimated_token_count_empty_messages():

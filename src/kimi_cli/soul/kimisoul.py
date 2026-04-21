@@ -218,6 +218,9 @@ class KimiSoul:
         self._slash_commands = self._build_slash_commands()
         self._slash_command_map = self._index_slash_commands(self._slash_commands)
 
+        # Cavecompress state for auto-trigger
+        self._last_cavecompress_tokens = 0
+
     @property
     def name(self) -> str:
         return self._agent.name
@@ -889,7 +892,40 @@ class KimiSoul:
             step_outcome: StepOutcome | None = None
 
             try:
-                # ── 2c. Context Compaction ──────────────────────────────────────
+                # Auto cavecompress if enabled and triggered by growth interval
+                if (
+                    self._runtime.config.loop_control.cavecompress_auto
+                    and self._runtime.llm is not None
+                ):
+                    from kimi_cli.soul.caveman import should_trigger_cavecompress
+
+                    if should_trigger_cavecompress(
+                        self._context.token_count_with_pending,
+                        self._last_cavecompress_tokens,
+                        self._runtime.llm.max_context_size,
+                        trigger_ratio=self._runtime.config.loop_control.cavecompress_interval,
+                    ):
+                        logger.info("Triggering auto cavecompress at step {step_no}", step_no=step_no)
+                        try:
+                            result = await self.cavecompress_context()
+                            self._last_cavecompress_tokens = result.estimated_token_count
+                            logger.info(
+                                "Auto cavecompress complete: {processed} lines processed, "
+                                "{removed} removed, {compressed} compressed",
+                                processed=result.lines_processed,
+                                removed=result.lines_removed,
+                                compressed=result.lines_compressed,
+                            )
+                        except Exception as cave_err:
+                            logger.error(
+                                "Auto cavecompress failed at step {step_no}: {error_type}: {error}",
+                                step_no=step_no,
+                                error_type=type(cave_err).__name__,
+                                error=cave_err,
+                            )
+                            # Don't raise - let it continue to try hard compaction if needed
+
+                # compact the context if needed (hard compaction at 85%)
                 if should_auto_compact(
                     self._context.token_count_with_pending,
                     self._runtime.llm.max_context_size,
@@ -899,6 +935,8 @@ class KimiSoul:
                     logger.info("Context too long, compacting...")
                     try:
                         await self.compact_context()
+                        # Reset cavecompress tracking after hard compaction
+                        self._last_cavecompress_tokens = self._context.token_count
                     except Exception as compact_err:
                         logger.error(
                             "Context compaction failed at step {step_no}: {error_type}: {error}",
@@ -1389,6 +1427,87 @@ class KimiSoul:
             )
         )
         _hook_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+
+    async def cavecompress_context(self) -> "CavecompressResult":
+        """
+        Compress context to caveman speak (brutally shortened).
+        Also wipes tool outputs before compression.
+
+        Returns:
+            CavecompressResult with stats about the compression.
+
+        Raises:
+            LLMNotSet: When the LLM is not set.
+            ChatProviderError: When the chat provider returns an error.
+        """
+        from kimi_cli.soul.caveman import compact_with_caveman, CavecompressResult
+
+        chat_provider = self._runtime.llm.chat_provider if self._runtime.llm is not None else None
+
+        async def _run_cavecompress_once() -> CavecompressResult:
+            if self._runtime.llm is None:
+                raise LLMNotSet()
+            return await compact_with_caveman(
+                self._context.history, self._runtime.llm, preserve_recent=2, wipe_tools=True
+            )
+
+        @tenacity.retry(
+            retry=retry_if_exception(self._is_retryable_error),
+            before_sleep=partial(self._retry_log, "cavecompress"),
+            wait=wait_exponential_jitter(initial=0.3, max=5, jitter=0.5),
+            stop=stop_after_attempt(self._loop_control.max_retries_per_step),
+            reraise=True,
+        )
+        async def _cavecompress_with_retry() -> CavecompressResult:
+            return await self._run_with_connection_recovery(
+                "cavecompress",
+                _run_cavecompress_once,
+                chat_provider=chat_provider,
+            )
+
+        from kimi_cli.hooks import events
+
+        await self._hook_engine.trigger(
+            "PreCavecompress",
+            matcher_value="manual",
+            input_data=events.pre_cavecompress(
+                session_id=self._runtime.session.id,
+                cwd=str(Path.cwd()),
+                trigger="manual",
+                token_count=self._context.token_count,
+            ),
+        )
+
+        wire_send(CompactionBegin())
+        result = await _cavecompress_with_retry()
+
+        # Replace context with compressed messages
+        await self._context.clear()
+        await self._context.write_system_prompt(self._agent.system_prompt)
+        await self._checkpoint()
+        await self._context.append_message(result.messages)
+
+        # Update token count estimate
+        estimated_tokens = result.estimated_token_count
+        await self._context.update_token_count(estimated_tokens)
+
+        wire_send(CompactionEnd())
+
+        _hook_task = asyncio.create_task(
+            self._hook_engine.trigger(
+                "PostCavecompress",
+                matcher_value="manual",
+                input_data=events.post_cavecompress(
+                    session_id=self._runtime.session.id,
+                    cwd=str(Path.cwd()),
+                    trigger="manual",
+                    estimated_token_count=estimated_tokens,
+                ),
+            )
+        )
+        _hook_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+
+        return result
 
     @staticmethod
     def _is_retryable_error(exception: BaseException) -> bool:
