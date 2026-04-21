@@ -422,7 +422,8 @@ class KimiStreamedMessage:
         self._id = response.id
         self._usage = response.usage
         message = response.choices[0].message
-        if reasoning_content := getattr(message, "reasoning_content", None):
+        reasoning_content = getattr(message, "reasoning_content", None) or getattr(message, "reasoning", None)
+        if reasoning_content:
             assert isinstance(reasoning_content, str)
             yield ThinkPart(think=reasoning_content)
         if message.content:
@@ -455,7 +456,8 @@ class KimiStreamedMessage:
                 delta = chunk.choices[0].delta
 
                 # convert thinking content
-                if reasoning_content := getattr(delta, "reasoning_content", None):
+                reasoning_content = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                if reasoning_content:
                     assert isinstance(reasoning_content, str)
                     yield ThinkPart(think=reasoning_content)
 
