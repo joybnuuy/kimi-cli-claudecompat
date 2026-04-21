@@ -130,6 +130,7 @@ class KimiToolset:
         self._mcp_loading_task: asyncio.Task[None] | None = None
         self._deferred_mcp_load: tuple[list[MCPConfig], Runtime] | None = None
         self._hook_engine: HookEngine = HookEngine()
+        self._pending_system_messages: list[str] = []
 
         # Deduplication state
         self._previous_step_calls: list[tuple[str, str]] = []
@@ -141,6 +142,12 @@ class KimiToolset:
 
     def set_hook_engine(self, engine: HookEngine) -> None:
         self._hook_engine = engine
+
+    def drain_system_messages(self) -> list[str]:
+        """Return and clear any pending system messages from hooks."""
+        messages = self._pending_system_messages
+        self._pending_system_messages = []
+        return messages
 
     def add(self, tool: ToolType) -> None:
         self._tool_dict[tool.name] = tool
@@ -314,6 +321,7 @@ class KimiToolset:
                         except Exception:
                             pass  # toast unavailable outside shell UI
                         logger.info("Hook system message: {}", result.system_message)
+                        self._pending_system_messages.append(result.system_message)
 
                 # --- Execute tool ---
                 t0 = time.monotonic()

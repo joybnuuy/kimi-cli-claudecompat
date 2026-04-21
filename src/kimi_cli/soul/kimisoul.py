@@ -1236,6 +1236,15 @@ class KimiSoul:
         if result.usage is not None:
             await self._context.update_token_count(result.usage.total)
 
+        # Inject hook system messages into conversation context so the model can see them
+        if isinstance(self._agent.toolset, KimiToolset):
+            hook_system_messages = self._agent.toolset.drain_system_messages()
+            for msg in hook_system_messages:
+                await self._context.append_message(
+                    Message(role="user", content=[system(msg)])
+                )
+                logger.debug("Injected hook system message into context: {}", msg)
+
         logger.debug(
             "Appending tool messages to context: {tool_messages}", tool_messages=tool_messages
         )

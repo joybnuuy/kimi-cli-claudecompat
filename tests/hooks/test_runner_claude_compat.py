@@ -259,6 +259,36 @@ async def test_engine_multiple_hooks_last_updated_input_wins():
     assert len(updated) == 2
 
 
+# ─── Engine integration: system_message flows through HookEngine ─────────────
+
+
+@pytest.mark.asyncio
+async def test_engine_returns_system_message():
+    """HookEngine preserves system_message from hook results."""
+    output = json.dumps({
+        "systemMessage": "Rewritten for token savings.",
+        "hookSpecificOutput": {
+            "permissionDecision": "allow",
+        }
+    })
+    hooks = [
+        HookDef(
+            event="PreToolUse",
+            matcher="Shell",
+            command=f"echo '{output}'",
+            timeout=5,
+        )
+    ]
+    engine = HookEngine(hooks)
+    results = await engine.trigger(
+        "PreToolUse",
+        matcher_value="Shell",
+        input_data={"tool_name": "Shell", "tool_input": {"command": "ls"}},
+    )
+    assert len(results) == 1
+    assert results[0].system_message == "Rewritten for token savings."
+
+
 # ─── Backward compatibility: existing hooks still work ───────────────────────
 
 
