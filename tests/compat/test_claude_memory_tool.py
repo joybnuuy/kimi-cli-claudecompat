@@ -68,6 +68,20 @@ class TestClaudeMemoryList:
         assert "User Role" in result.output
         assert "1" in (result.message or "")
 
+    @pytest.mark.asyncio
+    async def test_list_global(self, tool: ClaudeMemory, memory_dir: Path, tmp_path: Path):
+        """Global memories should be listable with scope=global."""
+        fake_claude_home = tmp_path / ".claude_home"
+        global_dir = fake_claude_home / "memory"
+        global_dir.mkdir(parents=True)
+        (global_dir / "MEMORY.md").write_text("- [Global Tip](global_tip.md) — Always test\n")
+        (global_dir / "global_tip.md").write_text("---\nname: Global Tip\ntype: feedback\n---\nTest everything")
+
+        result = await tool(Params(action="list", scope="global"))
+        assert not result.is_error
+        assert "Global Tip" in result.output
+        assert "global" in result.output.lower()
+
 
 class TestClaudeMemoryWrite:
     @pytest.mark.asyncio
@@ -221,6 +235,55 @@ class TestClaudeMemorySearch:
     async def test_search_requires_query(self, tool: ClaudeMemory):
         result = await tool(Params(action="search"))
         assert result.is_error
+
+    @pytest.mark.asyncio
+    async def test_search_cross_project(self, tool: ClaudeMemory, memory_dir: Path, tmp_path: Path):
+        """Search with scope=all should find memories in other projects."""
+        fake_claude_home = tmp_path / ".claude_home"
+
+        # Create a second project memory directory
+        other_project = fake_claude_home / "projects" / "other-project-hash" / "memory"
+        other_project.mkdir(parents=True)
+        (other_project / "MEMORY.md").write_text("- [Other Proj Mem](other_proj_mem.md) — Cross\n")
+        (other_project / "other_proj_mem.md").write_text(
+            "---\nname: Other Proj Mem\ndescription: Cross-project memory\ntype: project\n---\n"
+            "This memory lives in another project."
+        )
+
+        # Current project memory
+        (memory_dir / "current.md").write_text(
+            "---\nname: Current Mem\ndescription: Current project memory\ntype: project\n---\n"
+            "This is the current project."
+        )
+
+        # Search with scope=all for something only in the other project
+        result = await tool(Params(action="search", query="Cross-project", scope="all"))
+        assert not result.is_error
+        assert "Other Proj Mem" in result.output
+        assert "other-project-hash" in result.output
+
+        # Current project memory should also be found
+        result2 = await tool(Params(action="search", query="current project", scope="all"))
+        assert not result2.is_error
+        assert "Current Mem" in result2.output
+        assert "project" in result2.output.lower()
+
+    @pytest.mark.asyncio
+    async def test_search_global_in_all_scope(self, tool: ClaudeMemory, memory_dir: Path, tmp_path: Path):
+        """Search with scope=all should include global memories."""
+        fake_claude_home = tmp_path / ".claude_home"
+        global_dir = fake_claude_home / "memory"
+        global_dir.mkdir(parents=True)
+        (global_dir / "MEMORY.md").write_text("- [Global Mem](global_mem.md) — Global\n")
+        (global_dir / "global_mem.md").write_text(
+            "---\nname: Global Mem\ndescription: Global memory\ntype: feedback\n---\n"
+            "This is a global memory."
+        )
+
+        result = await tool(Params(action="search", query="global memory", scope="all"))
+        assert not result.is_error
+        assert "Global Mem" in result.output
+        assert "global" in result.output.lower()
 
 
 class TestClaudeMemoryRoundtrip:

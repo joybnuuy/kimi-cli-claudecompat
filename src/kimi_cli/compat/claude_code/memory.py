@@ -103,6 +103,26 @@ def _find_global_memory_dir() -> Path | None:
     return None
 
 
+def _find_all_project_memory_dirs() -> list[tuple[str, Path]]:
+    """Find all project memory directories under ~/.claude/projects/.
+
+    Returns a list of (project_dir_name, memory_dir) tuples for every
+    project that has a memory/ subdirectory containing a MEMORY.md file.
+    """
+    projects_dir = CLAUDE_HOME / "projects"
+    if not projects_dir.is_dir():
+        return []
+
+    results: list[tuple[str, Path]] = []
+    for project_dir in projects_dir.iterdir():
+        if not project_dir.is_dir():
+            continue
+        mem_dir = project_dir / "memory"
+        if mem_dir.is_dir() and (mem_dir / "MEMORY.md").is_file():
+            results.append((project_dir.name, mem_dir))
+    return results
+
+
 def _load_memories_from_dir(memory_dir: Path, remaining: int) -> tuple[list[dict[str, str]], int]:
     """Load memories from a single memory directory.
 
@@ -211,14 +231,6 @@ def load_claude_memories(work_dir: Path) -> str | None:
         "## Claude Code Memories (imported)\n",
         "The following memories were imported from Claude Code's memory system.\n",
     ]
-
-    # Track if we have any global memories to add a section header
-    has_global = global_dir is not None and any(
-        mem for mem in all_memories if global_dir in [global_dir]  # Simplified check
-    )
-    has_project = memory_dir is not None and any(
-        mem for mem in all_memories if True  # All non-global are project
-    )
 
     # Add memories grouped by type
     for mem_type in ("user", "feedback", "project", "reference", "unknown"):

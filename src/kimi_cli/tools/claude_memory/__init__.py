@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from kimi_cli.compat.claude_code.memory import (
     CLAUDE_HOME,
+    _find_all_project_memory_dirs,
     _find_global_memory_dir,
     _find_memory_dir,
     _parse_memory_frontmatter,
@@ -138,7 +139,8 @@ class Params(BaseModel):
             "The scope for the action. "
             "`project` = current project only, "
             "`global` = global memories only, "
-            "`all` = both project and global. "
+            "`all` = current project + global + all other projects. "
+            "For `search`, `all` scans every project memory directory. "
             "Applies to `list`, `read`, `write`, `search`."
         ),
     )
@@ -384,16 +386,25 @@ class ClaudeMemory(CallableTool2[Params]):
 
         # Collect directories to search
         dirs_to_search: list[tuple[str, Path]] = []
+        current_mem_dir: Path | None = None
 
         if scope in ("project", "all"):
-            mem_dir = _find_memory_dir(self._work_dir)
-            if mem_dir is not None:
-                dirs_to_search.append(("project", mem_dir))
+            current_mem_dir = _find_memory_dir(self._work_dir)
+            if current_mem_dir is not None:
+                dirs_to_search.append(("project", current_mem_dir))
 
         if scope in ("global", "all"):
             global_dir = _find_global_memory_dir()
             if global_dir is not None:
                 dirs_to_search.append(("global", global_dir))
+
+        # Cross-project search: scan all other project memory dirs
+        if scope == "all":
+            for project_name, mem_dir in _find_all_project_memory_dirs():
+                # Skip current project to avoid duplicates
+                if current_mem_dir is not None and mem_dir == current_mem_dir:
+                    continue
+                dirs_to_search.append((f"project: {project_name}", mem_dir))
 
         if not dirs_to_search:
             return ToolOk(output="No memory directories found.", message="No memories to search.")

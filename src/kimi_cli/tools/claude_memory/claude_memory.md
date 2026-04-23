@@ -12,3 +12,8 @@ Actions:
 - `write`: Create or overwrite a memory file with frontmatter
 - `delete`: Remove a memory file and its MEMORY.md entry
 - `search`: Find memories whose name or description matches a query
+
+Scope:
+- `project`: Current project only (`~/.claude/projects/<hash>/memory/`)
+- `global`: Global memories only (`~/.claude/memory/`)
+- `all`: Current project + global + all other projects. For `search`, this scans every project memory directory under `~/.claude/projects/`.
