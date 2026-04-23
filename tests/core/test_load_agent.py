@@ -78,6 +78,8 @@ def test_system_prompt_renders_os_and_shell(temp_work_dir, os_kind, shell, expec
         KIMI_ADDITIONAL_DIRS_INFO="",
         KIMI_OS=os_kind,
         KIMI_SHELL=shell,
+        KIMI_MODEL_NAME="test-model",
+        KIMI_PROVIDER_URI="test.example.com",
     )
     prompt = _load_system_prompt(
         DEFAULT_AGENT_FILE.parent / "system.md",
