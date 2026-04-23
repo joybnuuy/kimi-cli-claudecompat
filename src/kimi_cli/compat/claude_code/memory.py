@@ -13,7 +13,6 @@ for injection into kimi's system prompt as additional context.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from pathlib import Path
 from typing import Any
@@ -23,52 +22,60 @@ from kimi_cli.utils.logging import logger
 CLAUDE_HOME = Path.home() / ".claude"
 _MAX_MEMORY_BYTES = 16 * 1024  # 16 KiB budget for memory content
 _MEMORY_LINK_PATTERN = re.compile(r"\[([^\]]*)\]\(([^)]+)\)")
+_MAX_SANITIZED_LENGTH = 200
 
 
-def _project_hash(work_dir: Path) -> str:
-    """Compute the project path hash used by Claude Code for project-specific storage.
+def _djb2_hash(s: str) -> int:
+    """djb2 string hash — signed 32-bit, matching Claude Code's implementation."""
+    h = 0
+    for ch in s:
+        h = ((h << 5) - h + ord(ch)) & 0xFFFFFFFF
+    if h >= 0x80000000:
+        h -= 0x100000000
+    return h
 
-    Claude Code hashes the absolute project path to create a directory name.
-    The exact format varies, so we try multiple conventions.
+
+def _sanitize_path(name: str) -> str:
+    """Match Claude Code's sanitizePath: replace non-alphanumeric with '-'.
+
+    For paths > 200 chars, truncate and append djb2 hash in base36
+    (same algorithm Claude Code uses under Node.js).
     """
-    abs_path = str(work_dir.resolve())
-    # Claude Code uses the path with slashes replaced by dashes, prefixed with -
-    # e.g., /home/user/project -> -home-user-project
-    return abs_path.replace("/", "-").replace("\\", "-")
+    sanitized = re.sub(r"[^a-zA-Z0-9]", "-", name)
+    if len(sanitized) <= _MAX_SANITIZED_LENGTH:
+        return sanitized
+    hash_suffix = format(abs(_djb2_hash(name)), "x")
+    return f"{sanitized[:_MAX_SANITIZED_LENGTH]}-{hash_suffix}"
 
 
 def _find_memory_dir(work_dir: Path) -> Path | None:
     """Find the Claude Code memory directory for the given project.
 
-    Tries multiple path conventions since the exact hashing may vary.
+    Uses the same directory naming convention as Claude Code:
+    replace all non-alphanumeric characters with '-', with a hash
+    suffix for very long paths.
     """
     projects_dir = CLAUDE_HOME / "projects"
     if not projects_dir.is_dir():
         return None
 
-    # Try the dash-separated path convention
-    project_id = _project_hash(work_dir)
-    candidate = projects_dir / project_id / "memory"
+    slug = _sanitize_path(str(work_dir.resolve()))
+    candidate = projects_dir / slug / "memory"
     if candidate.is_dir():
         return candidate
 
-    # Try MD5 hash convention
-    md5_hash = hashlib.md5(str(work_dir.resolve()).encode()).hexdigest()
-    candidate = projects_dir / md5_hash / "memory"
-    if candidate.is_dir():
-        return candidate
-
-    # Scan for any project dir that has a memory subdirectory
-    # and contains a MEMORY.md referencing this path
-    for project_dir in projects_dir.iterdir():
-        if not project_dir.is_dir():
-            continue
-        mem_dir = project_dir / "memory"
-        if mem_dir.is_dir():
-            # Check if this looks like our project by examining MEMORY.md
-            memory_md = mem_dir / "MEMORY.md"
-            if memory_md.is_file():
-                return mem_dir
+    # For long paths, the directory may have been created by Claude Code
+    # using Bun.hash (wyhash) instead of djb2Hash. Fall back to prefix
+    # matching, matching Claude Code's findProjectDir behavior.
+    if len(slug) > _MAX_SANITIZED_LENGTH:
+        prefix = slug[:_MAX_SANITIZED_LENGTH]
+        for project_dir in projects_dir.iterdir():
+            if (
+                project_dir.is_dir()
+                and project_dir.name.startswith(prefix + "-")
+                and (project_dir / "memory").is_dir()
+            ):
+                return project_dir / "memory"
 
     return None
 

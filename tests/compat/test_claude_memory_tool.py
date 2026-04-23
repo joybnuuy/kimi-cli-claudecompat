@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from kimi_cli.compat.claude_code.memory import _sanitize_path
 from kimi_cli.tools.claude_memory import ClaudeMemory, Params, _slugify
 
 
@@ -15,7 +16,7 @@ def memory_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Set up a fake Claude Code memory directory for a project."""
     project = tmp_path / "project"
     project.mkdir()
-    project_hash = str(project.resolve()).replace("/", "-").replace("\\", "-")
+    project_hash = _sanitize_path(str(project.resolve()))
     fake_claude_home = tmp_path / ".claude_home"
     mem_dir = fake_claude_home / "projects" / project_hash / "memory"
     mem_dir.mkdir(parents=True)

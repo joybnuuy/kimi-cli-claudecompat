@@ -16,6 +16,7 @@ from kimi_cli.compat.claude_code.instructions import (
 )
 from kimi_cli.compat.claude_code.memory import (
     _parse_memory_frontmatter,
+    _sanitize_path,
     load_claude_memories,
 )
 from kimi_cli.compat.claude_code.mcp import (
@@ -193,18 +194,67 @@ class TestParseMemoryFrontmatter:
         assert body == "Body"
 
 
-class TestLoadClaudeMemories:
-    def test_no_memory_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+class TestSanitizePath:
+    def test_replaces_non_alphanumeric(self):
+        assert _sanitize_path("/home/user/my-project") == "-home-user-my-project"
+        assert _sanitize_path("/path/with_underscore") == "-path-with-underscore"
+        assert _sanitize_path("C:\\Users\\project") == "C--Users-project"
+
+    def test_long_path_gets_hash_suffix(self):
+        long_path = "/home/user/" + "a" * 250
+        result = _sanitize_path(long_path)
+        assert len(result) > 200
+        # '-home-user-' is 11 chars, so 189 'a's fit before the 200-char limit
+        assert result.startswith("-home-user-" + "a" * 189 + "-")
+
+    def test_djb2_hash_deterministic(self):
+        from kimi_cli.compat.claude_code.memory import _djb2_hash
+
+        assert _djb2_hash("hello") == _djb2_hash("hello")
+        assert _djb2_hash("hello") != _djb2_hash("world")
+
+
+class TestFindMemoryDir:
+    def test_returns_none_when_no_projects_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(
             "kimi_cli.compat.claude_code.memory.CLAUDE_HOME",
             tmp_path / ".claude_fake",
         )
-        result = load_claude_memories(tmp_path)
-        assert result is None
+        from kimi_cli.compat.claude_code.memory import _find_memory_dir
+
+        assert _find_memory_dir(tmp_path) is None
+
+    def test_finds_exact_match(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.memory.CLAUDE_HOME",
+            tmp_path / ".claude_home",
+        )
+        from kimi_cli.compat.claude_code.memory import _find_memory_dir
+
+        slug = _sanitize_path(str(tmp_path.resolve()))
+        mem_dir = tmp_path / ".claude_home" / "projects" / slug / "memory"
+        mem_dir.mkdir(parents=True)
+        assert _find_memory_dir(tmp_path) == mem_dir
+
+    def test_does_not_return_other_projects_memory(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        """Ensure we don't accidentally return another project's memory dir."""
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.memory.CLAUDE_HOME",
+            tmp_path / ".claude_home",
+        )
+        from kimi_cli.compat.claude_code.memory import _find_memory_dir
+
+        # Create another project's memory
+        other = tmp_path / ".claude_home" / "projects" / "some-other-project" / "memory"
+        other.mkdir(parents=True)
+        (other / "MEMORY.md").write_text("")
+
+        # Look for current project — should not find the other one
+        assert _find_memory_dir(tmp_path) is None
 
     def test_loads_memory_files(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         # Create a fake memory directory structure
-        project_hash = str(tmp_path.resolve()).replace("/", "-").replace("\\", "-")
+        project_hash = _sanitize_path(str(tmp_path.resolve()))
         memory_dir = tmp_path / ".claude_home" / "projects" / project_hash / "memory"
         memory_dir.mkdir(parents=True)
 

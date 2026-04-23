@@ -17,7 +17,7 @@ from kimi_cli.compat.claude_code.memory import (
     _find_global_memory_dir,
     _find_memory_dir,
     _parse_memory_frontmatter,
-    _project_hash,
+    _sanitize_path,
 )
 from kimi_cli.soul.agent import Runtime
 from kimi_cli.tools.utils import load_desc
@@ -39,8 +39,8 @@ def _ensure_memory_dir(work_dir: Path) -> Path:
     if mem_dir is not None:
         return mem_dir
 
-    # Create it using the dash-path convention
-    project_id = _project_hash(work_dir)
+    # Create it using the same convention as Claude Code
+    project_id = _sanitize_path(str(work_dir.resolve()))
     mem_dir = CLAUDE_HOME / "projects" / project_id / "memory"
     mem_dir.mkdir(parents=True, exist_ok=True)
 
