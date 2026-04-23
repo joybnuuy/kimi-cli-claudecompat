@@ -75,6 +75,7 @@ from kimi_cli.wire.types import (
     ContentPart,
     MCPLoadingBegin,
     MCPLoadingEnd,
+    Notification,
     StatusUpdate,
     SteerInput,
     StepBegin,
@@ -860,14 +861,36 @@ class KimiSoul:
                     )
                     if mc_result.cleared_count > 0:
                         self._context.adjust_token_count(-mc_result.tokens_saved)
+                        gap_min = round(
+                            (time.monotonic() - (self._last_assistant_message_time or 0))
+                            / 60.0
+                        )
+                        wire_send(
+                            Notification(
+                                id=f"microcompact-{time.monotonic()}",
+                                category="system",
+                                type="micro_compact",
+                                source_kind="soul",
+                                source_id="kimisoul",
+                                title="Micro-compaction",
+                                body=(
+                                    f"Cleared {mc_result.cleared_count} old tool result(s) "
+                                    f"(~{mc_result.tokens_saved} tokens) after {gap_min}min idle."
+                                ),
+                                severity="info",
+                                created_at=time.time(),
+                                payload={
+                                    "tools_cleared": mc_result.cleared_count,
+                                    "tokens_saved": mc_result.tokens_saved,
+                                    "gap_minutes": gap_min,
+                                },
+                            )
+                        )
                         from kimi_cli.telemetry import track
 
                         track(
                             "micro_compact_triggered",
-                            gap_minutes=round(
-                                (time.monotonic() - (self._last_assistant_message_time or 0))
-                                / 60.0
-                            ),
+                            gap_minutes=gap_min,
                             tools_cleared=mc_result.cleared_count,
                             tokens_saved=mc_result.tokens_saved,
                         )
