@@ -52,6 +52,7 @@ from kimi_cli.soul.compaction import (
     estimate_text_tokens,
     should_auto_compact,
 )
+from kimi_cli.soul.micro_compaction import microcompact_messages
 from kimi_cli.soul.context import Context
 from kimi_cli.soul.dynamic_injection import (
     DynamicInjection,
@@ -209,6 +210,7 @@ class KimiSoul:
         ]
         self._hook_engine: HookEngine = HookEngine()
         self._stop_hook_active: bool = False
+        self._last_assistant_message_time: float = time.monotonic()
         if self.is_root:
             self._runtime.notifications.ack_ids("llm", extract_notification_ids(context.history))
 
@@ -889,6 +891,28 @@ class KimiSoul:
             step_outcome: StepOutcome | None = None
 
             try:
+                # Micro-compact old tool results before checking full compaction (LLM-free)
+                if self._loop_control.micro_compact_enabled:
+                    mc_result = microcompact_messages(
+                        self._context.history,
+                        last_assistant_time=self._last_assistant_message_time,
+                        gap_threshold_minutes=self._loop_control.micro_compact_gap_threshold_minutes,
+                        keep_recent=self._loop_control.micro_compact_keep_recent,
+                    )
+                    if mc_result.cleared_count > 0:
+                        self._context.adjust_token_count(-mc_result.tokens_saved)
+                        from kimi_cli.telemetry import track
+
+                        track(
+                            "micro_compact_triggered",
+                            gap_minutes=round(
+                                (time.monotonic() - (self._last_assistant_message_time or 0))
+                                / 60.0
+                            ),
+                            tools_cleared=mc_result.cleared_count,
+                            tokens_saved=mc_result.tokens_saved,
+                        )
+
                 # compact the context if needed
                 if should_auto_compact(
                     self._context.token_count_with_pending,
@@ -951,19 +975,16 @@ class KimiSoul:
                 # --- StopFailure hook ---
                 from kimi_cli.hooks import events as _hook_events
 
-                _hook_task = asyncio.create_task(
-                    self._hook_engine.trigger(
-                        "StopFailure",
-                        matcher_value=type(e).__name__,
-                        input_data=_hook_events.stop_failure(
-                            session_id=self._runtime.session.id,
-                            cwd=str(Path.cwd()),
-                            error_type=type(e).__name__,
-                            error_message=str(e),
-                        ),
-                    )
+                self._hook_engine.fire_and_forget_trigger(
+                    "StopFailure",
+                    matcher_value=type(e).__name__,
+                    input_data=_hook_events.stop_failure(
+                        session_id=self._runtime.session.id,
+                        cwd=str(Path.cwd()),
+                        error_type=type(e).__name__,
+                        error_message=str(e),
+                    ),
                 )
-                _hook_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
                 # break the agent loop
                 raise
 
@@ -1029,22 +1050,19 @@ class KimiSoul:
                 # --- Notification hook ---
                 from kimi_cli.hooks import events
 
-                _hook_task = asyncio.create_task(
-                    self._hook_engine.trigger(
-                        "Notification",
-                        matcher_value=view.event.type,
-                        input_data=events.notification(
-                            session_id=self._runtime.session.id,
-                            cwd=str(Path.cwd()),
-                            sink="llm",
-                            notification_type=view.event.type,
-                            title=view.event.title,
-                            body=view.event.body,
-                            severity=view.event.severity,
-                        ),
-                    )
+                self._hook_engine.fire_and_forget_trigger(
+                    "Notification",
+                    matcher_value=view.event.type,
+                    input_data=events.notification(
+                        session_id=self._runtime.session.id,
+                        cwd=str(Path.cwd()),
+                        sink="llm",
+                        notification_type=view.event.type,
+                        title=view.event.title,
+                        body=view.event.body,
+                        severity=view.event.severity,
+                    ),
                 )
-                _hook_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
 
             await self._runtime.notifications.deliver_pending(
                 "llm",
@@ -1233,6 +1251,7 @@ class KimiSoul:
                 raise LLMNotSupported(self._runtime.llm, list(missing_caps))
 
         await self._context.append_message(result.message)
+        self._last_assistant_message_time = time.monotonic()
         if result.usage is not None:
             await self._context.update_token_count(result.usage.total)
 
@@ -1385,19 +1404,16 @@ class KimiSoul:
             track_kwargs["llm_output_tokens"] = compaction_result.usage.output
         track("compaction_finished", **track_kwargs)
 
-        _hook_task = asyncio.create_task(
-            self._hook_engine.trigger(
-                "PostCompact",
-                matcher_value=trigger_reason,
-                input_data=events.post_compact(
-                    session_id=self._runtime.session.id,
-                    cwd=str(Path.cwd()),
-                    trigger=trigger_reason,
-                    estimated_token_count=estimated_token_count,
-                ),
-            )
+        self._hook_engine.fire_and_forget_trigger(
+            "PostCompact",
+            matcher_value=trigger_reason,
+            input_data=events.post_compact(
+                session_id=self._runtime.session.id,
+                cwd=str(Path.cwd()),
+                trigger=trigger_reason,
+                estimated_token_count=estimated_token_count,
+            ),
         )
-        _hook_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
 
     @staticmethod
     def _is_retryable_error(exception: BaseException) -> bool:

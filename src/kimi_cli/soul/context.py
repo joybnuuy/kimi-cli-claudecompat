@@ -247,6 +247,23 @@ class Context:
         async with aiofiles.open(self._file_backend, "a", encoding="utf-8") as f:
             await f.write(json.dumps({"role": "_usage", "token_count": token_count}) + "\n")
 
+    def adjust_token_count(self, delta: int) -> None:
+        """Adjust the cached token count by a delta (positive or negative).
+
+        Used by micro-compaction to reflect token savings without an API call.
+        Subtraction is applied to ``_pending_token_estimate`` first (it is a
+        rough heuristic and least accurate), then to ``_token_count``.
+        """
+        if delta >= 0:
+            self._token_count += delta
+            return
+
+        to_remove = -delta
+        pending_remove = min(self._pending_token_estimate, to_remove)
+        self._pending_token_estimate -= pending_remove
+        to_remove -= pending_remove
+        self._token_count = max(0, self._token_count - to_remove)
+
     def _parse_context_line(
         self,
         line: str,

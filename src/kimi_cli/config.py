@@ -94,6 +94,19 @@ class LoopControl(BaseModel):
     Auto-compaction triggers when context_tokens >= max_context_size * compaction_trigger_ratio
     or when context_tokens + reserved_context_size >= max_context_size."""
 
+    micro_compact_enabled: bool = True
+    """Whether time-based micro-compaction is enabled. Micro-compaction clears
+    old tool result content when the gap since the last assistant message exceeds
+    the configured threshold. Default is True."""
+
+    micro_compact_gap_threshold_minutes: float = Field(default=5.0, ge=0.5)
+    """Minimum gap (in minutes) since the last assistant message to trigger
+    micro-compaction. Default is 5.0 minutes."""
+
+    micro_compact_keep_recent: int = Field(default=3, ge=1)
+    """Number of most-recent compactable tool results to preserve during
+    micro-compaction. Default is 3."""
+
 
 class BackgroundConfig(BaseModel):
     """Background task runtime configuration."""
