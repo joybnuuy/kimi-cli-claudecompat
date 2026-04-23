@@ -37,22 +37,20 @@ class EnterPlanMode(CallableTool2[Params]):
         self._toggle_callback: Callable[[], Awaitable[bool]] | None = None
         self._plan_file_path_getter: Callable[[], Path | None] | None = None
         self._plan_mode_checker: Callable[[], bool] | None = None
-        self._is_auto_approve: Callable[[], bool] | None = None
+        self._is_yolo: Callable[[], bool] | None = None
 
     def bind(
         self,
         toggle_callback: Callable[[], Awaitable[bool]],
         plan_file_path_getter: Callable[[], Path | None],
         plan_mode_checker: Callable[[], bool],
-        is_auto_approve: Callable[[], bool] | None = None,
-        *,
         is_yolo: Callable[[], bool] | None = None,
     ) -> None:
         """Late-bind soul callbacks after KimiSoul is constructed."""
         self._toggle_callback = toggle_callback
         self._plan_file_path_getter = plan_file_path_getter
         self._plan_mode_checker = plan_mode_checker
-        self._is_auto_approve = is_auto_approve or is_yolo
+        self._is_yolo = is_yolo
 
     @override
     async def __call__(self, params: Params) -> ToolReturnValue:
@@ -79,7 +77,7 @@ class EnterPlanMode(CallableTool2[Params]):
             return ToolReturnValue(
                 is_error=False,
                 output=(
-                    f"Plan mode activated (auto-approved).\n"
+                    f"Plan mode activated (auto-approved in YOLO mode).\n"
                     f"Plan file: {plan_path}\n"
                     f"Workflow: identify key questions about the codebase → "
                     f"use Agent(subagent_type='explore') to investigate if needed → "

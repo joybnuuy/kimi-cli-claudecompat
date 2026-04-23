@@ -88,20 +88,20 @@ class ExitPlanMode(CallableTool2[Params]):
         self._toggle_callback: Callable[[], Awaitable[bool]] | None = None
         self._plan_file_path_getter: Callable[[], Path | None] | None = None
         self._plan_mode_checker: Callable[[], bool] | None = None
-        self._should_auto_approve_exit: Callable[[], bool] | None = None
+        self._is_yolo: Callable[[], bool] | None = None
 
     def bind(
         self,
         toggle_callback: Callable[[], Awaitable[bool]],
         plan_file_path_getter: Callable[[], Path | None],
         plan_mode_checker: Callable[[], bool],
-        should_auto_approve_exit: Callable[[], bool] | None = None,
+        is_yolo: Callable[[], bool] | None = None,
     ) -> None:
         """Late-bind soul callbacks after KimiSoul is constructed."""
         self._toggle_callback = toggle_callback
         self._plan_file_path_getter = plan_file_path_getter
         self._plan_mode_checker = plan_mode_checker
-        self._should_auto_approve_exit = should_auto_approve_exit
+        self._is_yolo = is_yolo
 
     @override
     async def __call__(self, params: Params) -> ToolReturnValue:
@@ -140,7 +140,7 @@ class ExitPlanMode(CallableTool2[Params]):
             return ToolReturnValue(
                 is_error=False,
                 output=(
-                    f"Plan approved (auto-approved). "
+                    f"Plan approved (auto-approved in YOLO mode). "
                     f"Plan mode deactivated. All tools are now available.\n"
                     f"Plan saved to: {plan_path}\n\n"
                     f"## Approved Plan:\n{plan_content}"

@@ -66,23 +66,23 @@ class AskUserQuestion(CallableTool2[Params]):
 
     def __init__(self) -> None:
         super().__init__()
-        self._is_afk: Callable[[], bool] | None = None
+        self._is_yolo: Callable[[], bool] | None = None
 
-    def bind_afk(self, is_afk: Callable[[], bool]) -> None:
-        """Late-bind afk checker so we can auto-dismiss when no user is present."""
-        self._is_afk = is_afk
+    def bind_approval(self, is_yolo: Callable[[], bool]) -> None:
+        """Late-bind yolo checker so we can auto-dismiss in auto-approve mode."""
+        self._is_yolo = is_yolo
 
     @override
     async def __call__(self, params: Params) -> ToolReturnValue:
-        if self._is_afk and self._is_afk():
+        if self._is_yolo and self._is_yolo():
             return ToolReturnValue(
                 is_error=False,
                 output=(
-                    '{"answers": {}, "note": "Running in afk mode.'
-                    ' No user is present. Make your own decision."}'
+                    '{"answers": {}, "note": "Running in auto-approve (YOLO)'
+                    ' (yolo) mode. Make your own decision."}'
                 ),
-                message="Afk mode, auto-dismissed.",
-                display=[BriefDisplayBlock(text="Auto-dismissed (afk)")],
+                message="Auto-approve (YOLO) mode, auto-dismissed.",
+                display=[BriefDisplayBlock(text="Auto-dismissed (yolo)")],
             )
 
         wire = get_wire_or_none()
