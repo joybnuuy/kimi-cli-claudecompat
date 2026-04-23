@@ -126,6 +126,31 @@ def _asyncio_handler(
         except Exception:
             pass
 
+    # When a Task is GC'd before its exception is retrieved, asyncio calls
+    # the exception handler with ``exception=None``.  The default handler
+    # prints the useless "Unhandled exception in event loop / Exception None"
+    # message.  Log the task details so we can identify the culprit.
+    if exc is None:
+        try:
+            from kimi_cli.utils.logging import logger
+
+            msg = context.get("message", "Unhandled exception in event loop")
+            future = context.get("future")
+            if future is not None:
+                logger.warning(
+                    "Asyncio task was garbage-collected before its exception was retrieved. "
+                    "Task: {task!r}. Original message: {msg}",
+                    task=future,
+                    msg=msg,
+                )
+            else:
+                logger.warning(
+                    "Asyncio exception handler called with no exception. Context: {context}",
+                    context=context,
+                )
+        except Exception:
+            pass
+
     # Delegate so the original logging behavior (or custom handler) runs.
     if _original_asyncio_handler is not None:
         _original_asyncio_handler(loop, context)

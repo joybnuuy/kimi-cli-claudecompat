@@ -34,10 +34,32 @@ class ACPServer:
         self.sessions: dict[str, tuple[ACPSession, _ModelIDConv]] = {}
         self.negotiated_version: ACPVersionSpec | None = None
         self._auth_methods: list[acp.schema.AuthMethod] = []
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
     def on_connect(self, conn: acp.Client) -> None:
         logger.info("ACP client connected")
         self.conn = conn
+
+    def _start_background_task(self, coro: asyncio.Coroutine[Any, Any, Any]) -> asyncio.Task[Any]:
+        """Fire-and-forget a coroutine with strong-reference safety.
+
+        Keeps the task alive so that an unretrieved exception does not trigger
+        ``loop.call_exception_handler`` with ``exception=None`` (which surfaces
+        as the cryptic "Unhandled exception in event loop / Exception None").
+        """
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+
+        def _cleanup(t: asyncio.Task[Any]) -> None:
+            self._background_tasks.discard(t)
+            if t.cancelled():
+                return
+            exc = t.exception()
+            if exc is not None:
+                logger.opt(exception=exc).warning("ACP background task failed")
+
+        task.add_done_callback(_cleanup)
+        return task
 
     async def initialize(
         self,
@@ -184,7 +206,7 @@ class ACPServer:
             acp.schema.AvailableCommand(name=cmd.name, description=cmd.description)
             for cmd in soul_slash_registry.list_commands()
         ]
-        asyncio.create_task(
+        self._start_background_task(
             self.conn.session_update(
                 session_id=session.id,
                 update=acp.schema.AvailableCommandsUpdate(
