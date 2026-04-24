@@ -210,9 +210,6 @@ def load_claude_memories(work_dir: Path) -> str | None:
 
     # Load project-specific memories (higher priority)
     memory_dir = _find_memory_dir(work_dir)
-    if memory_dir is None:
-        return None
-
     if memory_dir is not None:
         logger.info("Found project Claude Code memory directory: {}", memory_dir)
         project_memories, remaining = _load_memories_from_dir(memory_dir, remaining)

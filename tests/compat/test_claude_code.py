@@ -289,6 +289,33 @@ class TestFindMemoryDir:
         assert "Testing Preference" in result
         assert "integration tests" in result
 
+    def test_loads_global_memories_when_no_project_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Global memories should load even when no project memory dir exists."""
+        monkeypatch.setattr(
+            "kimi_cli.compat.claude_code.memory.CLAUDE_HOME",
+            tmp_path / ".claude_home",
+        )
+
+        global_dir = tmp_path / ".claude_home" / "memory"
+        global_dir.mkdir(parents=True)
+
+        (global_dir / "MEMORY.md").write_text(
+            "- [Global Tip](global_tip.md) — Always test edge cases\n"
+        )
+        (global_dir / "global_tip.md").write_text(
+            "---\nname: Global Tip\ndescription: Testing guidance\ntype: feedback\n---\n"
+            "Always test edge cases first.\n\n"
+            "**Why:** Edge cases reveal the most bugs.\n\n"
+            "**How to apply:** Before writing happy-path tests."
+        )
+
+        result = load_claude_memories(tmp_path)
+        assert result is not None
+        assert "Global Tip" in result
+        assert "edge cases" in result
+
 
 # ─── Hooks ───────────────────────────────────────────────────────────────────
 
