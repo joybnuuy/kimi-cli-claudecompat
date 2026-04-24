@@ -48,6 +48,24 @@ class TestSlugify:
         result = _slugify("a" * 100)
         assert len(result) <= 60
 
+    def test_unicode_normalization(self):
+        """NFKD: accented chars decompose to ASCII base."""
+        assert _slugify("Café Notes") == "cafe_notes"
+        assert _slugify("Naïve Rôle") == "naive_role"
+
+    def test_non_ascii_fallback_hash(self):
+        """Pure non-ASCII names get a deterministic hash-based filename."""
+        result = _slugify("用户反馈")
+        assert result.startswith("memory_")
+        assert len(result) == 23  # "memory_" + 16 hex chars
+        # Deterministic
+        assert _slugify("用户反馈") == result
+
+    def test_mixed_ascii_non_ascii(self):
+        """ASCII parts survive even when mixed with non-ASCII."""
+        # Emoji get stripped, ASCII part remains
+        assert _slugify("🔥 hot tip") == "hot_tip"
+
 
 class TestClaudeMemoryList:
     @pytest.mark.asyncio

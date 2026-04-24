@@ -4,7 +4,9 @@ Provides a tool that lets kimi read, write, update, delete, and search
 memories stored in Claude Code's file-based memory system.
 """
 
+import hashlib
 import re
+import unicodedata
 from pathlib import Path
 from typing import Literal, override
 
@@ -28,9 +30,23 @@ _DESC = load_desc(Path(__file__).parent / "claude_memory.md")
 
 
 def _slugify(name: str) -> str:
-    """Convert a memory name to a filename-safe slug."""
-    slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
-    return slug[:60] if slug else "memory"
+    """Convert a memory name to a filename-safe slug.
+
+    Uses Unicode NFKD normalization so e.g. 'Café' → 'cafe'.
+    Falls back to a hash for names with no ASCII-alphanumeric content
+    (e.g. Chinese, emoji-only) so every name gets a unique filename.
+    """
+    # Decompose accented characters (é → e + ́)
+    normalized = unicodedata.normalize("NFKD", name)
+    # Strip combining diacritical marks
+    base = "".join(c for c in normalized if unicodedata.category(c) != "Mn")
+    # Keep ASCII alphanumeric, collapse sequences of non-alnum to single underscore
+    slug = re.sub(r"[^a-z0-9]+", "_", base.lower()).strip("_")
+    if slug:
+        return slug[:60]
+    # Entirely non-ASCII / emoji — fall back to deterministic hash
+    hash_suffix = hashlib.sha256(name.encode()).hexdigest()[:16]
+    return f"memory_{hash_suffix}"
 
 
 def _ensure_memory_dir(work_dir: Path) -> Path:
