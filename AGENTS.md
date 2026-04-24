@@ -169,7 +169,7 @@ For the full procedure, follow the `release` skill (`.agents/skills/release/SKIL
 ### Low Priority / Nice to Have
 
 7. **Memory import/export** — Export all memories to single file; import from backup.
-8. **Memory sync with OpenViking** — Bridge file-based memories with vector DB.
+8. **Memory RAG integration** — Research best approach for RAG-like semantic memory retrieval. OpenViking is one option; evaluate alternatives (embedded vector store, FAISS/Annoy, external DB, or hybrid).
 
 ### Done ✓
 
