@@ -169,6 +169,55 @@ class TestClaudeMemoryWrite:
         assert "Version 2" in content
         assert "Version 1" not in content
 
+    @pytest.mark.asyncio
+    async def test_write_new_memory_has_timestamps(
+        self, tool: ClaudeMemory, memory_dir: Path
+    ):
+        result = await tool(
+            Params(
+                action="write",
+                name="Timestamped Memory",
+                description="Has timestamps",
+                content="Body",
+            )
+        )
+        assert not result.is_error
+        slug_file = memory_dir / "timestamped_memory.md"
+        text = slug_file.read_text()
+        assert "created_at:" in text
+        assert "updated_at:" in text
+
+    @pytest.mark.asyncio
+    async def test_write_update_preserves_created_at(
+        self, tool: ClaudeMemory, memory_dir: Path
+    ):
+        # Seed an existing memory with a known created_at
+        slug_file = memory_dir / "preserved_memory.md"
+        slug_file.write_text(
+            "---\n"
+            "name: Preserved Memory\n"
+            "description: Old\n"
+            "type: project\n"
+            "created_at: 2024-01-15T08:30:00+00:00\n"
+            "updated_at: 2024-01-15T08:30:00+00:00\n"
+            "---\n\n"
+            "Old body.\n"
+        )
+        # Update via the tool
+        result = await tool(
+            Params(
+                action="write",
+                name="Preserved Memory",
+                description="New",
+                content="New body.",
+            )
+        )
+        assert not result.is_error
+        text = slug_file.read_text()
+        assert "created_at: 2024-01-15T08:30:00+00:00" in text
+        assert "updated_at:" in text
+        assert "New body." in text
+
 
 class TestClaudeMemoryRead:
     @pytest.mark.asyncio

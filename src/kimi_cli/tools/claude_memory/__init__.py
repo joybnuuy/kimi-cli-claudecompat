@@ -7,6 +7,7 @@ memories stored in Claude Code's file-based memory system.
 import hashlib
 import re
 import unicodedata
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal, override
 
@@ -332,12 +333,27 @@ class ClaudeMemory(CallableTool2[Params]):
 
         file_path = mem_dir / filename
 
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        # Preserve created_at when updating; set it fresh when creating
+        if existing is not None:
+            try:
+                raw_existing = existing.read_text(encoding="utf-8")
+                fm, _ = _parse_memory_frontmatter(raw_existing)
+                created_at = fm.get("created_at", now)
+            except OSError:
+                created_at = now
+        else:
+            created_at = now
+
         # Write memory file with frontmatter
         memory_content = (
             f"---\n"
             f"name: {name}\n"
             f"description: {description}\n"
             f"type: {memory_type}\n"
+            f"created_at: {created_at}\n"
+            f"updated_at: {now}\n"
             f"---\n\n"
             f"{content}\n"
         )
