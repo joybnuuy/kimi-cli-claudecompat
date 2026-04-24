@@ -163,8 +163,8 @@ For the full procedure, follow the `release` skill (`.agents/skills/release/SKIL
 
 3. **Claude Code plugin loading** — Parse `installed_plugins.json` for plugin hooks/settings.
 4. **Skill for `/memory` slash command** — Add slash command equivalent for memory management.
-5. **Better memory file matching** — Unicode normalization for `_slugify()`.
-6. **Memory content versioning** — Add `created_at`/`updated_at` timestamps to frontmatter.
+5. ~~Better memory file matching — Unicode normalization for `_slugify()`.~~ ✓
+6. ~~Memory content versioning — `created_at`/`updated_at` timestamps in frontmatter.~~ ✓
 
 ### Low Priority / Nice to Have
 
