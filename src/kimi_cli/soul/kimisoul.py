@@ -60,7 +60,7 @@ from kimi_cli.soul.dynamic_injection import (
     normalize_history,
 )
 from kimi_cli.soul.dynamic_injections.plan_mode import PlanModeInjectionProvider
-from kimi_cli.soul.dynamic_injections.yolo_mode import YoloModeInjectionProvider
+from kimi_cli.soul.dynamic_injections.afk_mode import AfkModeInjectionProvider
 from kimi_cli.soul.message import check_message, system, system_reminder, tool_result_to_message
 from kimi_cli.soul.slash import registry as soul_slash_registry
 from kimi_cli.soul.toolset import KimiToolset
@@ -205,8 +205,8 @@ class KimiSoul:
             PlanModeInjectionProvider(),
             *(
                 []
-                if self._runtime.config.skip_yolo_prompt_injection
-                else [YoloModeInjectionProvider()]
+                if self._runtime.config.skip_afk_prompt_injection
+                else [AfkModeInjectionProvider()]
             ),
         ]
         self._hook_engine: HookEngine = HookEngine()
@@ -297,6 +297,35 @@ class KimiSoul:
                     exc_info=True,
                 )
         return injections
+
+    async def _notify_injection_providers_compacted(self) -> None:
+        """Notify all injection providers that the context has been compacted.
+
+        Failures are isolated per-provider so a buggy third-party provider
+        cannot abort compaction (which would skip CompactionEnd wire events
+        and PostCompact telemetry).
+        """
+        for provider in self._injection_providers:
+            try:
+                await provider.on_context_compacted()
+            except Exception:
+                logger.warning(
+                    "injection provider %s on_context_compacted failed",
+                    type(provider).__name__,
+                    exc_info=True,
+                )
+
+    async def notify_afk_changed(self, enabled: bool) -> None:
+        """Notify dynamic injection providers that afk mode changed."""
+        for provider in self._injection_providers:
+            try:
+                await provider.on_afk_changed(enabled)
+            except Exception:
+                logger.warning(
+                    "injection provider %s on_afk_changed failed",
+                    type(provider).__name__,
+                    exc_info=True,
+                )
 
     def _bind_plan_mode_tools(self) -> None:
         """Bind plan mode state to tools that support it."""
@@ -450,7 +479,8 @@ class KimiSoul:
         max_size = self._runtime.llm.max_context_size if self._runtime.llm is not None else 0
         return StatusSnapshot(
             context_usage=self._context_usage,
-            yolo_enabled=self._approval.is_yolo(),
+            yolo_enabled=self._approval.is_yolo_flag(),
+            afk_enabled=self._approval.is_afk(),
             plan_mode=self._plan_mode,
             context_tokens=token_count,
             max_context_tokens=max_size,
@@ -1237,7 +1267,15 @@ class KimiSoul:
         if result.usage is not None:
             await self._context.update_token_count(result.usage.total)
 
-        # Inject hook system messages into conversation context so the model can see them
+        logger.debug(
+            "Appending tool messages to context: {tool_messages}", tool_messages=tool_messages
+        )
+        await self._context.append_message(tool_messages)
+
+        # Inject hook system messages into conversation context so the model can see them.
+        # We append them *after* tool results so the assistant→tool message pairs stay
+        # intact — some LLM APIs reject user messages interleaved between tool_calls and
+        # their matching tool results.
         if isinstance(self._agent.toolset, KimiToolset):
             hook_system_messages = self._agent.toolset.drain_system_messages()
             for msg in hook_system_messages:
@@ -1245,11 +1283,6 @@ class KimiSoul:
                     Message(role="user", content=[system(msg)])
                 )
                 logger.debug("Injected hook system message into context: {}", msg)
-
-        logger.debug(
-            "Appending tool messages to context: {tool_messages}", tool_messages=tool_messages
-        )
-        await self._context.append_message(tool_messages)
         # token count of tool results are not available yet
 
     async def compact_context(
@@ -1362,6 +1395,12 @@ class KimiSoul:
 
         # Estimate token count so context_usage is not reported as 0%
         await self._context.update_token_count(estimated_token_count)
+
+        # Notify dynamic injection providers that history has been rebuilt so
+        # they can reset any one-shot throttling state. Failures are isolated
+        # per-provider so compaction completion (wire event + telemetry) is
+        # not affected by a buggy provider.
+        await self._notify_injection_providers_compacted()
 
         wire_send(CompactionEnd())
 
