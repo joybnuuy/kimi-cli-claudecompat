@@ -228,7 +228,7 @@ async def model(app: Shell, args: str):
             message="Select a model (↑↓ navigate, Enter select, Ctrl+C cancel):",
             options=model_choices,
             default=curr_model_name or model_choices[0][0],
-        ).prompt_async()
+        ).prompt_async(set_exception_handler=False)
     except (EOFError, KeyboardInterrupt):
         return
 
@@ -257,7 +257,7 @@ async def model(app: Shell, args: str):
                 message="Enable thinking mode? (↑↓ navigate, Enter select, Ctrl+C cancel):",
                 options=thinking_choices,
                 default="on" if curr_thinking else "off",
-            ).prompt_async()
+            ).prompt_async(set_exception_handler=False)
         except (EOFError, KeyboardInterrupt):
             return
 
@@ -356,7 +356,7 @@ async def editor(app: Shell, args: str):
                         if current_editor in {v for v, _ in options}
                         else "code --wait"
                     ),
-                ).prompt_async(),
+                ).prompt_async(set_exception_handler=False),
             )
         except (EOFError, KeyboardInterrupt):
             return
@@ -478,7 +478,9 @@ async def feedback(app: Shell, args: str):
 
     prompt_session: PromptSession[str] = PromptSession()
     try:
-        content = await prompt_session.prompt_async("Enter your feedback: ")
+        content = await prompt_session.prompt_async(
+            "Enter your feedback: ", set_exception_handler=False
+        )
     except (EOFError, KeyboardInterrupt):
         console.print("[grey50]Feedback cancelled.[/grey50]")
         return
@@ -819,7 +821,7 @@ async def undo(app: Shell, args: str):
             message="Select a turn to undo (↑↓ navigate, Enter select, Ctrl+C cancel):",
             options=choices,
             default=choices[-1][0],
-        ).prompt_async()
+        ).prompt_async(set_exception_handler=False)
     except (EOFError, KeyboardInterrupt):
         return
 

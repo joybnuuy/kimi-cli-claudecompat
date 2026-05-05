@@ -626,9 +626,11 @@ class KimiCLI:
                     return
                 forwarded_approval_requests[request.id] = request
                 if request.id not in approval_bridge_tasks:
-                    approval_bridge_tasks[request.id] = asyncio.create_task(
-                        _bridge_approval_request(request)
+                    task = asyncio.create_task(_bridge_approval_request(request))
+                    task.add_done_callback(
+                        lambda t: t.exception() if not t.cancelled() else None
                     )
+                    approval_bridge_tasks[request.id] = task
                 wire.soul_side.send(request)
 
             async def _ui_loop_fn(wire: Wire) -> None:

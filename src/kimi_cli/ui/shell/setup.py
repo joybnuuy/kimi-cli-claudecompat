@@ -186,7 +186,7 @@ async def _prompt_choice(*, header: str, choices: list[str]) -> str | None:
             message=header,
             options=[(choice, choice) for choice in choices],
             default=choices[0],
-        ).prompt_async()
+        ).prompt_async(set_exception_handler=False)
     except (EOFError, KeyboardInterrupt):
         return None
 
@@ -198,6 +198,7 @@ async def _prompt_text(prompt: str, *, is_password: bool = False) -> str | None:
             await session.prompt_async(
                 f" {prompt}: ",
                 is_password=is_password,
+                set_exception_handler=False,
             )
         ).strip()
     except (EOFError, KeyboardInterrupt):

@@ -256,6 +256,9 @@ class WireServer:
 
                 task = asyncio.create_task(self._dispatch_msg(msg))
                 task.add_done_callback(self._dispatch_tasks.discard)
+                task.add_done_callback(
+                    lambda t: t.exception() if not t.cancelled() else None
+                )
                 self._dispatch_tasks.add(task)
                 continue
 
@@ -292,6 +295,9 @@ class WireServer:
 
             task = asyncio.create_task(self._dispatch_msg(msg))
             task.add_done_callback(self._dispatch_tasks.discard)
+            task.add_done_callback(
+                lambda t: t.exception() if not t.cancelled() else None
+            )
             self._dispatch_tasks.add(task)
 
     async def _shutdown(self) -> None:

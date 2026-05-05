@@ -110,7 +110,10 @@ def track_session_started_once(
 
     if _sink is not None:
         with suppress(Exception):
-            asyncio.get_running_loop().create_task(_sink.flush())
+            task = asyncio.get_running_loop().create_task(_sink.flush())
+            task.add_done_callback(
+                lambda t: t.exception() if not t.cancelled() else None
+            )
 
 
 def disable() -> None:

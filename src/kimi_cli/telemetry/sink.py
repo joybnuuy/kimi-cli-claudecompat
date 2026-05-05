@@ -137,7 +137,10 @@ class EventSink:
         """Schedule an async flush from any thread."""
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(self._flush_async())
+            task = loop.create_task(self._flush_async())
+            task.add_done_callback(
+                lambda t: t.exception() if not t.cancelled() else None
+            )
         except RuntimeError:
             # No running event loop — will be flushed by periodic task or on exit
             pass

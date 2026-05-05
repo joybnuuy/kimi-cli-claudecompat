@@ -72,7 +72,7 @@ class SessionPickerApp:
         """Run the picker and return ``(session_id, work_dir)``, or *None*."""
         await self._load_sessions()
         self._sync_radio_list()
-        result = await self._app.run_async()
+        result = await self._app.run_async(set_exception_handler=False)
         if result is None:
             return None
         if result == _EMPTY_SESSION_ID:

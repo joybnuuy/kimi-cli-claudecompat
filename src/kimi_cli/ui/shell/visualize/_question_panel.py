@@ -304,7 +304,9 @@ async def prompt_other_input(question_text: str) -> str:
     console.print(Text("  Enter your answer:", style="dim"))
     try:
         session: PromptSession[str] = PromptSession()
-        return (await session.prompt_async("  > ")).strip()
+        return (
+            await session.prompt_async("  > ", set_exception_handler=False)
+        ).strip()
     except (EOFError, KeyboardInterrupt):
         return ""
 

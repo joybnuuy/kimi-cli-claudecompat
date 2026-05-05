@@ -252,7 +252,7 @@ class TaskBrowserApp:
         self._app = self._build_app()
 
     async def run(self) -> None:
-        await self._app.run_async()
+        await self._app.run_async(set_exception_handler=False)
 
     @property
     def _selected_task_id(self) -> str | None:

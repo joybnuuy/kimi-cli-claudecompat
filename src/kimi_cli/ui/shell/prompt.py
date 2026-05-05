@@ -2050,7 +2050,9 @@ class CustomPromptSession:
         self._prefill_text = None
         with patch_stdout(raw=True):
             command = str(
-                await self._session.prompt_async(placeholder=placeholder, default=default)
+                await self._session.prompt_async(
+                    placeholder=placeholder, default=default, set_exception_handler=False
+                )
             ).strip()
             command = command.replace("\x00", "")  # just in case null bytes are somehow inserted
             # Sanitize UTF-16 surrogates that may come from Windows clipboard
