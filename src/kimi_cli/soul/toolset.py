@@ -149,6 +149,23 @@ class KimiToolset:
         self._pending_system_messages = []
         return messages
 
+    def _append_system_messages(self, results: list[Any]) -> None:
+        """Collect systemMessage from hook results and surface to UI + context."""
+        for result in results:
+            if result.system_message:
+                try:
+                    from kimi_cli.ui.shell.prompt import toast
+
+                    toast(
+                        f"[hook] {result.system_message}",
+                        duration=5.0,
+                        topic="hook_system_message",
+                    )
+                except Exception:
+                    pass  # toast unavailable outside shell UI
+                logger.info("Hook system message: {}", result.system_message)
+                self._pending_system_messages.append(result.system_message)
+
     def add(self, tool: ToolType) -> None:
         self._tool_dict[tool.name] = tool
 
@@ -309,19 +326,7 @@ class KimiToolset:
                             tool_call.function.name,
                             result.updated_input,
                         )
-                    if result.system_message:
-                        try:
-                            from kimi_cli.ui.shell.prompt import toast
-
-                            toast(
-                                f"[hook] {result.system_message}",
-                                duration=5.0,
-                                topic="hook_system_message",
-                            )
-                        except Exception:
-                            pass  # toast unavailable outside shell UI
-                        logger.info("Hook system message: {}", result.system_message)
-                        self._pending_system_messages.append(result.system_message)
+                self._append_system_messages(results)
 
                 # --- Execute tool ---
                 t0 = time.monotonic()
@@ -334,19 +339,23 @@ class KimiToolset:
                         tool_name=tool_call.function.name,
                         call_id=tool_call.id,
                     )
-                    # --- PostToolUseFailure (fire-and-forget) ---
-                    self._hook_engine.fire_and_forget_trigger(
-                        "PostToolUseFailure",
-                        matcher_value=tool_call.function.name,
-                        input_data=events.post_tool_use_failure(
-                            session_id=_get_session_id(),
-                            cwd=str(Path.cwd()),
-                            tool_name=tool_call.function.name,
-                            tool_input=tool_input_dict,
-                            error=str(e),
-                            tool_call_id=tool_call.id,
-                        ),
-                    )
+                    # --- PostToolUseFailure ---
+                    try:
+                        post_results = await self._hook_engine.trigger(
+                            "PostToolUseFailure",
+                            matcher_value=tool_call.function.name,
+                            input_data=events.post_tool_use_failure(
+                                session_id=_get_session_id(),
+                                cwd=str(Path.cwd()),
+                                tool_name=tool_call.function.name,
+                                tool_input=tool_input_dict,
+                                error=str(e),
+                                tool_call_id=tool_call.id,
+                            ),
+                        )
+                        self._append_system_messages(post_results)
+                    except Exception:
+                        logger.debug("PostToolUseFailure hook error, failing open")
                     from kimi_cli.telemetry import track
 
                     _error_type = type(e).__name__
@@ -389,19 +398,23 @@ class KimiToolset:
                         dup_type="cross_step" if is_cross_step_dup else "normal",
                     )
 
-                # --- PostToolUse (fire-and-forget) ---
-                self._hook_engine.fire_and_forget_trigger(
-                    "PostToolUse",
-                    matcher_value=tool_call.function.name,
-                    input_data=events.post_tool_use(
-                        session_id=_get_session_id(),
-                        cwd=str(Path.cwd()),
-                        tool_name=tool_call.function.name,
-                        tool_input=tool_input_dict,
-                        tool_output=str(ret)[:2000],
-                        tool_call_id=tool_call.id,
-                    ),
-                )
+                # --- PostToolUse ---
+                try:
+                    post_results = await self._hook_engine.trigger(
+                        "PostToolUse",
+                        matcher_value=tool_call.function.name,
+                        input_data=events.post_tool_use(
+                            session_id=_get_session_id(),
+                            cwd=str(Path.cwd()),
+                            tool_name=tool_call.function.name,
+                            tool_input=tool_input_dict,
+                            tool_output=str(ret)[:2000],
+                            tool_call_id=tool_call.id,
+                        ),
+                    )
+                    self._append_system_messages(post_results)
+                except Exception:
+                    logger.debug("PostToolUse hook error, failing open")
 
                 return ToolResult(tool_call_id=tool_call.id, return_value=ret)
 
