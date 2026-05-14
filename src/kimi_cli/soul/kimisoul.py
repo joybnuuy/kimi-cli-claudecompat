@@ -698,11 +698,6 @@ class KimiSoul:
                     mode="plan" if self._plan_mode else "agent",
                     at_step=getattr(self, "_current_step_no", 0),
                 )
-            if created_approval_source is not None and self._runtime.approval_runtime is not None:
-                self._runtime.approval_runtime.cancel_by_source(
-                    created_approval_source.kind,
-                    created_approval_source.id,
-                )
             if approval_source_token is not None:
                 reset_current_approval_source(approval_source_token)
 
