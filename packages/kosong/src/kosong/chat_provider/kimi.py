@@ -136,15 +136,25 @@ class Kimi:
 
     @property
     def thinking_effort(self) -> ThinkingEffort | None:
-        reasoning_effort = self._generation_kwargs.get("reasoning_effort")
-        if reasoning_effort is None:
-            return None
-        match reasoning_effort:
-            case "low":
-                return "low"
-            case "medium":
-                return "medium"
-            case "high":
+        extra_body = self._generation_kwargs.get("extra_body") or {}
+        thinking = extra_body.get("thinking") or {}
+        thinking_type = thinking.get("type")
+        if thinking_type is None:
+            # Fall back to legacy reasoning_effort field
+            reasoning_effort = self._generation_kwargs.get("reasoning_effort")
+            if reasoning_effort is None:
+                return None
+            match reasoning_effort:
+                case "low":
+                    return "low"
+                case "medium":
+                    return "medium"
+                case "high":
+                    return "high"
+                case _:
+                    return "off"
+        match thinking_type:
+            case "enabled":
                 return "high"
             case _:
                 return "off"
@@ -194,17 +204,7 @@ class Kimi:
         return True
 
     def with_thinking(self, effort: ThinkingEffort) -> Self:
-        match effort:
-            case "off":
-                reasoning_effort = None
-            case "low":
-                reasoning_effort = "low"
-            case "medium":
-                reasoning_effort = "medium"
-            case "high" | "xhigh" | "max":
-                # Kimi's API caps at "high"; xhigh/max are Anthropic-specific.
-                reasoning_effort = "high"
-        return self.with_generation_kwargs(reasoning_effort=reasoning_effort).with_extra_body(
+        return self.with_extra_body(
             {
                 "thinking": {
                     "type": "enabled" if effort != "off" else "disabled",
