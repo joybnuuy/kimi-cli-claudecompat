@@ -58,8 +58,7 @@ def test_default_config_dump():
             "hooks": [],
             "merge_all_available_skills": True,
             "extra_skill_dirs": [],
-            "telemetry": True,
-            "skip_afk_prompt_injection": False,
+            "telemetry": True, "claude_code": {}, "skip_afk_prompt_injection": False,
         }
     )
 

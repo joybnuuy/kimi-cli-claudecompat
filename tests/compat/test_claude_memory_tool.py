@@ -1,0 +1,397 @@
+"""Tests for the ClaudeMemory tool — read/write/delete/search operations."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from kimi_cli.compat.claude_code.memory import _sanitize_path
+from kimi_cli.tools.claude_memory import ClaudeMemory, Params, _slugify
+
+
+@pytest.fixture
+def memory_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Set up a fake Claude Code memory directory for a project."""
+    project = tmp_path / "project"
+    project.mkdir()
+    project_hash = _sanitize_path(str(project.resolve()))
+    fake_claude_home = tmp_path / ".claude_home"
+    mem_dir = fake_claude_home / "projects" / project_hash / "memory"
+    mem_dir.mkdir(parents=True)
+    (mem_dir / "MEMORY.md").write_text("")
+
+    monkeypatch.setattr("kimi_cli.tools.claude_memory.CLAUDE_HOME", fake_claude_home)
+    monkeypatch.setattr("kimi_cli.compat.claude_code.memory.CLAUDE_HOME", fake_claude_home)
+    return mem_dir
+
+
+@pytest.fixture
+def tool(tmp_path: Path, memory_dir: Path) -> ClaudeMemory:
+    """Create a ClaudeMemory tool instance with a fake runtime."""
+    project = tmp_path / "project"
+    runtime = SimpleNamespace(
+        builtin_args=SimpleNamespace(KIMI_WORK_DIR=project),
+    )
+    return ClaudeMemory(runtime)  # type: ignore[arg-type]
+
+
+class TestSlugify:
+    def test_simple(self):
+        assert _slugify("User Role") == "user_role"
+
+    def test_special_chars(self):
+        assert _slugify("my-project! (v2)") == "my_project_v2"
+
+    def test_long_name_truncated(self):
+        result = _slugify("a" * 100)
+        assert len(result) <= 60
+
+    def test_unicode_normalization(self):
+        """NFKD: accented chars decompose to ASCII base."""
+        assert _slugify("Café Notes") == "cafe_notes"
+        assert _slugify("Naïve Rôle") == "naive_role"
+
+    def test_non_ascii_fallback_hash(self):
+        """Pure non-ASCII names get a deterministic hash-based filename."""
+        result = _slugify("用户反馈")
+        assert result.startswith("memory_")
+        assert len(result) == 23  # "memory_" + 16 hex chars
+        # Deterministic
+        assert _slugify("用户反馈") == result
+
+    def test_mixed_ascii_non_ascii(self):
+        """ASCII parts survive even when mixed with non-ASCII."""
+        # Emoji get stripped, ASCII part remains
+        assert _slugify("🔥 hot tip") == "hot_tip"
+
+
+class TestClaudeMemoryList:
+    @pytest.mark.asyncio
+    async def test_list_empty(self, tool: ClaudeMemory):
+        result = await tool(Params(action="list"))
+        assert not result.is_error
+        assert "empty" in result.output.lower() or "empty" in (result.message or "").lower()
+
+    @pytest.mark.asyncio
+    async def test_list_with_entries(self, tool: ClaudeMemory, memory_dir: Path):
+        (memory_dir / "MEMORY.md").write_text(
+            "- [User Role](user_role.md) — Senior engineer\n"
+        )
+        (memory_dir / "user_role.md").write_text(
+            "---\nname: User Role\ntype: user\n---\nSenior engineer"
+        )
+        result = await tool(Params(action="list"))
+        assert not result.is_error
+        assert "User Role" in result.output
+        assert "1" in (result.message or "")
+
+    @pytest.mark.asyncio
+    async def test_list_global(self, tool: ClaudeMemory, memory_dir: Path, tmp_path: Path):
+        """Global memories should be listable with scope=global."""
+        fake_claude_home = tmp_path / ".claude_home"
+        global_dir = fake_claude_home / "memory"
+        global_dir.mkdir(parents=True)
+        (global_dir / "MEMORY.md").write_text("- [Global Tip](global_tip.md) — Always test\n")
+        (global_dir / "global_tip.md").write_text("---\nname: Global Tip\ntype: feedback\n---\nTest everything")
+
+        result = await tool(Params(action="list", scope="global"))
+        assert not result.is_error
+        assert "Global Tip" in result.output
+        assert "global" in result.output.lower()
+
+
+class TestClaudeMemoryWrite:
+    @pytest.mark.asyncio
+    async def test_write_new_memory(self, tool: ClaudeMemory, memory_dir: Path):
+        result = await tool(
+            Params(
+                action="write",
+                name="Test Memory",
+                description="A test memory entry",
+                memory_type="project",
+                content="This is test content.\n\n**Why:** Testing.\n**How to apply:** Always.",
+            )
+        )
+        assert not result.is_error
+        assert "Created" in result.output or "Created" in (result.message or "")
+
+        # Verify file was created
+        slug_file = memory_dir / "test_memory.md"
+        assert slug_file.exists()
+        content = slug_file.read_text()
+        assert "name: Test Memory" in content
+        assert "type: project" in content
+        assert "This is test content." in content
+
+        # Verify MEMORY.md was updated
+        index = (memory_dir / "MEMORY.md").read_text()
+        assert "Test Memory" in index
+        assert "test_memory.md" in index
+
+    @pytest.mark.asyncio
+    async def test_write_requires_name(self, tool: ClaudeMemory):
+        result = await tool(Params(action="write", content="some content"))
+        assert result.is_error
+
+    @pytest.mark.asyncio
+    async def test_write_requires_content(self, tool: ClaudeMemory):
+        result = await tool(Params(action="write", name="Test"))
+        assert result.is_error
+
+    @pytest.mark.asyncio
+    async def test_write_update_existing(self, tool: ClaudeMemory, memory_dir: Path):
+        # Write initial
+        await tool(
+            Params(
+                action="write",
+                name="Evolving Memory",
+                description="v1",
+                content="Version 1",
+            )
+        )
+        # Update
+        result = await tool(
+            Params(
+                action="write",
+                name="Evolving Memory",
+                description="v2",
+                content="Version 2",
+            )
+        )
+        assert not result.is_error
+        assert "Updated" in result.output or "Updated" in (result.message or "")
+
+        # Verify content was replaced
+        slug_file = memory_dir / "evolving_memory.md"
+        content = slug_file.read_text()
+        assert "Version 2" in content
+        assert "Version 1" not in content
+
+    @pytest.mark.asyncio
+    async def test_write_new_memory_has_timestamps(
+        self, tool: ClaudeMemory, memory_dir: Path
+    ):
+        result = await tool(
+            Params(
+                action="write",
+                name="Timestamped Memory",
+                description="Has timestamps",
+                content="Body",
+            )
+        )
+        assert not result.is_error
+        slug_file = memory_dir / "timestamped_memory.md"
+        text = slug_file.read_text()
+        assert "created_at:" in text
+        assert "updated_at:" in text
+
+    @pytest.mark.asyncio
+    async def test_write_update_preserves_created_at(
+        self, tool: ClaudeMemory, memory_dir: Path
+    ):
+        # Seed an existing memory with a known created_at
+        slug_file = memory_dir / "preserved_memory.md"
+        slug_file.write_text(
+            "---\n"
+            "name: Preserved Memory\n"
+            "description: Old\n"
+            "type: project\n"
+            "created_at: 2024-01-15T08:30:00+00:00\n"
+            "updated_at: 2024-01-15T08:30:00+00:00\n"
+            "---\n\n"
+            "Old body.\n"
+        )
+        # Update via the tool
+        result = await tool(
+            Params(
+                action="write",
+                name="Preserved Memory",
+                description="New",
+                content="New body.",
+            )
+        )
+        assert not result.is_error
+        text = slug_file.read_text()
+        assert "created_at: 2024-01-15T08:30:00+00:00" in text
+        assert "updated_at:" in text
+        assert "New body." in text
+
+
+class TestClaudeMemoryRead:
+    @pytest.mark.asyncio
+    async def test_read_existing(self, tool: ClaudeMemory, memory_dir: Path):
+        (memory_dir / "my_mem.md").write_text(
+            "---\nname: My Mem\ntype: user\n---\nHello world"
+        )
+        result = await tool(Params(action="read", name="My Mem"))
+        assert not result.is_error
+        assert "Hello world" in result.output
+
+    @pytest.mark.asyncio
+    async def test_read_by_filename(self, tool: ClaudeMemory, memory_dir: Path):
+        (memory_dir / "custom_file.md").write_text("---\nname: Custom\n---\nData")
+        result = await tool(Params(action="read", name="custom_file.md"))
+        assert not result.is_error
+        assert "Data" in result.output
+
+    @pytest.mark.asyncio
+    async def test_read_not_found(self, tool: ClaudeMemory):
+        result = await tool(Params(action="read", name="nonexistent"))
+        assert result.is_error
+
+    @pytest.mark.asyncio
+    async def test_read_requires_name(self, tool: ClaudeMemory):
+        result = await tool(Params(action="read"))
+        assert result.is_error
+
+
+class TestClaudeMemoryDelete:
+    @pytest.mark.asyncio
+    async def test_delete_existing(self, tool: ClaudeMemory, memory_dir: Path):
+        # Create a memory first
+        (memory_dir / "to_delete.md").write_text("---\nname: To Delete\n---\nBye")
+        (memory_dir / "MEMORY.md").write_text(
+            "- [To Delete](to_delete.md) — Will be deleted\n"
+        )
+
+        result = await tool(Params(action="delete", name="To Delete"))
+        assert not result.is_error
+        assert not (memory_dir / "to_delete.md").exists()
+
+        # Verify removed from index
+        index = (memory_dir / "MEMORY.md").read_text()
+        assert "to_delete.md" not in index
+
+    @pytest.mark.asyncio
+    async def test_delete_not_found(self, tool: ClaudeMemory):
+        result = await tool(Params(action="delete", name="ghost"))
+        assert result.is_error
+
+    @pytest.mark.asyncio
+    async def test_delete_requires_name(self, tool: ClaudeMemory):
+        result = await tool(Params(action="delete"))
+        assert result.is_error
+
+
+class TestClaudeMemorySearch:
+    @pytest.mark.asyncio
+    async def test_search_finds_match(self, tool: ClaudeMemory, memory_dir: Path):
+        (memory_dir / "backend.md").write_text(
+            "---\nname: Backend Stack\ndescription: Go and Postgres\ntype: project\n---\n"
+            "We use Go 1.22 with pgx for Postgres."
+        )
+        (memory_dir / "frontend.md").write_text(
+            "---\nname: Frontend Stack\ndescription: React and TypeScript\ntype: project\n---\n"
+            "React 18 with Next.js."
+        )
+
+        result = await tool(Params(action="search", query="Postgres"))
+        assert not result.is_error
+        assert "Backend Stack" in result.output
+        assert "Frontend Stack" not in result.output
+
+    @pytest.mark.asyncio
+    async def test_search_no_match(self, tool: ClaudeMemory, memory_dir: Path):
+        (memory_dir / "something.md").write_text("---\nname: Something\n---\nStuff")
+        result = await tool(Params(action="search", query="zzznonexistentzz"))
+        assert not result.is_error
+        assert "No memories matching" in result.output
+
+    @pytest.mark.asyncio
+    async def test_search_requires_query(self, tool: ClaudeMemory):
+        result = await tool(Params(action="search"))
+        assert result.is_error
+
+    @pytest.mark.asyncio
+    async def test_search_cross_project(self, tool: ClaudeMemory, memory_dir: Path, tmp_path: Path):
+        """Search with scope=all should find memories in other projects."""
+        fake_claude_home = tmp_path / ".claude_home"
+
+        # Create a second project memory directory
+        other_project = fake_claude_home / "projects" / "other-project-hash" / "memory"
+        other_project.mkdir(parents=True)
+        (other_project / "MEMORY.md").write_text("- [Other Proj Mem](other_proj_mem.md) — Cross\n")
+        (other_project / "other_proj_mem.md").write_text(
+            "---\nname: Other Proj Mem\ndescription: Cross-project memory\ntype: project\n---\n"
+            "This memory lives in another project."
+        )
+
+        # Current project memory
+        (memory_dir / "current.md").write_text(
+            "---\nname: Current Mem\ndescription: Current project memory\ntype: project\n---\n"
+            "This is the current project."
+        )
+
+        # Search with scope=all for something only in the other project
+        result = await tool(Params(action="search", query="Cross-project", scope="all"))
+        assert not result.is_error
+        assert "Other Proj Mem" in result.output
+        assert "other-project-hash" in result.output
+
+        # Current project memory should also be found
+        result2 = await tool(Params(action="search", query="current project", scope="all"))
+        assert not result2.is_error
+        assert "Current Mem" in result2.output
+        assert "project" in result2.output.lower()
+
+    @pytest.mark.asyncio
+    async def test_search_global_in_all_scope(self, tool: ClaudeMemory, memory_dir: Path, tmp_path: Path):
+        """Search with scope=all should include global memories."""
+        fake_claude_home = tmp_path / ".claude_home"
+        global_dir = fake_claude_home / "memory"
+        global_dir.mkdir(parents=True)
+        (global_dir / "MEMORY.md").write_text("- [Global Mem](global_mem.md) — Global\n")
+        (global_dir / "global_mem.md").write_text(
+            "---\nname: Global Mem\ndescription: Global memory\ntype: feedback\n---\n"
+            "This is a global memory."
+        )
+
+        result = await tool(Params(action="search", query="global memory", scope="all"))
+        assert not result.is_error
+        assert "Global Mem" in result.output
+        assert "global" in result.output.lower()
+
+
+class TestClaudeMemoryRoundtrip:
+    @pytest.mark.asyncio
+    async def test_write_then_read_then_search_then_delete(
+        self, tool: ClaudeMemory, memory_dir: Path
+    ):
+        """Full lifecycle: write → read → search → delete."""
+        # Write
+        write_result = await tool(
+            Params(
+                action="write",
+                name="Lifecycle Test",
+                description="Testing full lifecycle",
+                memory_type="feedback",
+                content="Always test the full lifecycle.\n\n**Why:** Prevents regressions.",
+            )
+        )
+        assert not write_result.is_error
+
+        # Read
+        read_result = await tool(Params(action="read", name="Lifecycle Test"))
+        assert not read_result.is_error
+        assert "full lifecycle" in read_result.output
+        assert "type: feedback" in read_result.output
+
+        # Search
+        search_result = await tool(Params(action="search", query="lifecycle"))
+        assert not search_result.is_error
+        assert "Lifecycle Test" in search_result.output
+
+        # List
+        list_result = await tool(Params(action="list"))
+        assert not list_result.is_error
+        assert "Lifecycle Test" in list_result.output
+
+        # Delete
+        delete_result = await tool(Params(action="delete", name="Lifecycle Test"))
+        assert not delete_result.is_error
+
+        # Verify gone
+        read_after = await tool(Params(action="read", name="Lifecycle Test"))
+        assert read_after.is_error

@@ -152,6 +152,8 @@ def create_llm(
 
             if gen_kwargs:
                 chat_provider = chat_provider.with_generation_kwargs(**gen_kwargs)
+            if os.getenv("KIMI_THINKING_DISABLED", "").lower() in ("1", "true", "yes"):
+                chat_provider = chat_provider.with_thinking("off")
         case "openai_legacy":
             from kosong.contrib.chat_provider.openai_legacy import OpenAILegacy
 
@@ -303,7 +305,7 @@ def derive_model_capabilities(model: LLMModel) -> set[ModelCapability]:
     if "thinking" in model.model.lower() or "reason" in model.model.lower():
         capabilities.update(("thinking", "always_thinking"))
     # These models support thinking but can be toggled on/off
-    elif model.model in {"kimi-for-coding", "kimi-code"}:
+    elif model.model in {"kimi-for-coding", "kimi-code", "kimi-k2.5", "kimi-k2.6"}:
         capabilities.update(("thinking", "image_in", "video_in"))
     return capabilities
 

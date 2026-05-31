@@ -87,6 +87,12 @@ def extract_key_argument(json_content: str | streamingjson.Lexer, tool_name: str
             if not isinstance(curr_args, dict) or not curr_args.get("url"):
                 return None
             key_argument = str(curr_args["url"])
+        case "ClaudeMemory":
+            if not isinstance(curr_args, dict) or not curr_args.get("action"):
+                return None
+            action = str(curr_args["action"])
+            name = str(curr_args.get("name", ""))
+            key_argument = f"{action}: {name}" if name else action
         case _:
             if isinstance(json_content, streamingjson.Lexer):
                 # lexer.json_content is list[str] based on streamingjson source code

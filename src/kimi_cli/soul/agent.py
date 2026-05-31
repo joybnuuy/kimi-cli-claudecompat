@@ -16,6 +16,7 @@ from kimi_cli.agentspec import load_agent_spec
 from kimi_cli.approval_runtime import ApprovalRuntime
 from kimi_cli.auth.oauth import OAuthManager
 from kimi_cli.background import BackgroundTaskManager
+from kimi_cli.compat.claude_code import ClaudeCodeCompat, load_claude_code_compat
 from kimi_cli.config import Config
 from kimi_cli.exception import MCPConfigError, SystemPromptTemplateError
 from kimi_cli.llm import LLM
@@ -63,6 +64,10 @@ class BuiltinSystemPromptArgs:
     """The operating system kind, e.g. 'Windows', 'macOS', 'Linux'."""
     KIMI_SHELL: str
     """The shell executable used by the Shell tool, e.g. 'bash (`/bin/bash`)'."""
+    KIMI_MODEL_NAME: str
+    """The LLM model name, e.g. 'kimi-k2.5', 'claude-sonnet-4-20250514'."""
+    KIMI_PROVIDER_URI: str
+    """The domain of the LLM provider, e.g. 'moonshot.ai', 'anthropic.com'."""
 
 
 _AGENTS_MD_MAX_BYTES = 32 * 1024  # 32 KiB
@@ -186,6 +191,8 @@ class Runtime:
     skills: dict[str, Skill]
     additional_dirs: list[KaosPath]
     skills_dirs: list[KaosPath]
+    claude_code_compat: ClaudeCodeCompat | None = None
+    """Claude Code compatibility layer data (instructions, memory, hooks)."""
     subagent_store: SubagentStore | None = None
     approval_runtime: ApprovalRuntime | None = None
     root_wire_hub: RootWireHub | None = None
@@ -218,12 +225,42 @@ class Runtime:
         afk: bool = False,
         runtime_afk: bool = False,
         skills_dirs: list[KaosPath] | None = None,
+        model_name: str = "",
+        provider_uri: str = "",
     ) -> Runtime:
         ls_output, agents_md, environment = await asyncio.gather(
             list_directory(session.work_dir),
             load_agents_md(session.work_dir),
             Environment.detect(),
         )
+
+        # Load Claude Code compatibility layer
+        try:
+            claude_compat = load_claude_code_compat(Path(str(session.work_dir)))
+        except Exception as exc:
+            logger.warning("Claude Code compat layer failed to load: {}", exc)
+            claude_compat = ClaudeCodeCompat(enabled=False)
+        if claude_compat.enabled:
+            # Merge CLAUDE.md instructions with AGENTS.md
+            if claude_compat.extra_instructions:
+                claude_section = (
+                    "\n\n# Claude Code Instructions (imported)\n\n"
+                    + claude_compat.extra_instructions
+                )
+                if agents_md:
+                    agents_md = agents_md + claude_section
+                else:
+                    agents_md = claude_section.strip()
+                logger.info("Merged Claude Code instructions into AGENTS.md")
+
+            # Inject memories into the agents_md content
+            if claude_compat.memory_prompt:
+                memory_section = "\n\n" + claude_compat.memory_prompt
+                if agents_md:
+                    agents_md = agents_md + memory_section
+                else:
+                    agents_md = memory_section.strip()
+                logger.info("Injected Claude Code memories into system prompt")
 
         # Discover and format skills (grouped by scope for the system prompt).
         scoped_roots = await resolve_skills_roots(
@@ -312,6 +349,8 @@ class Runtime:
                 KIMI_ADDITIONAL_DIRS_INFO=additional_dirs_info,
                 KIMI_OS=environment.os_kind,
                 KIMI_SHELL=f"{environment.shell_name} (`{environment.shell_path}`)",
+                KIMI_MODEL_NAME=model_name or (llm.model_name if llm else "unknown"),
+                KIMI_PROVIDER_URI=provider_uri,
             ),
             denwa_renji=DenwaRenji(),
             approval=Approval(state=approval_state),
@@ -330,6 +369,7 @@ class Runtime:
             skills_dirs=[
                 r for r in skills_roots_canonical if not is_within_directory(r, session.work_dir)
             ],
+            claude_code_compat=claude_compat if claude_compat.enabled else None,
             subagent_store=SubagentStore(session),
             approval_runtime=ApprovalRuntime(),
             root_wire_hub=RootWireHub(),

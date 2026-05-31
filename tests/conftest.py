@@ -106,6 +106,8 @@ def builtin_args(temp_work_dir: KaosPath) -> BuiltinSystemPromptArgs:
         KIMI_ADDITIONAL_DIRS_INFO="",
         KIMI_OS="macOS",
         KIMI_SHELL="bash (`/bin/bash`)",
+        KIMI_MODEL_NAME="test-model",
+        KIMI_PROVIDER_URI="test.example.com",
     )
 
 

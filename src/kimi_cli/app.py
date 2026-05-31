@@ -117,6 +117,25 @@ def _cleanup_stale_foreground_subagents(runtime: Runtime) -> None:
         subagent_store.update_instance(agent_id, status="failed")
 
 
+def _extract_domain(base_url: str) -> str:
+    """Extract the registrable domain from a base URL.
+
+    'https://api.moonshot.ai/v1' → 'moonshot.ai'
+    'https://api.anthropic.com'  → 'anthropic.com'
+    """
+    if not base_url:
+        return ""
+    try:
+        from urllib.parse import urlparse
+
+        host = urlparse(base_url).hostname or ""
+        parts = host.split(".")
+        # Return last two parts (e.g., moonshot.ai, anthropic.com)
+        return ".".join(parts[-2:]) if len(parts) >= 2 else host
+    except Exception:
+        return ""
+
+
 class KimiCLI:
     @staticmethod
     async def create(
@@ -264,6 +283,8 @@ class KimiCLI:
             afk=afk,
             runtime_afk=runtime_afk,
             skills_dirs=skills_dirs,
+            model_name=model.model if model else "",
+            provider_uri=_extract_domain(provider.base_url) if provider else "",
         )
         runtime.ui_mode = ui_mode
         runtime.resumed = resumed
@@ -291,11 +312,21 @@ class KimiCLI:
         if startup_progress is not None:
             startup_progress("Loading agent...")
 
+        # Merge MCP configs: user-provided + Claude Code compat
+        merged_mcp_configs = list(mcp_configs) if mcp_configs else []
+        claude_compat = getattr(runtime, "claude_code_compat", None)
+        if claude_compat and claude_compat.mcp_configs:
+            merged_mcp_configs.extend(claude_compat.mcp_configs)
+            logger.info(
+                "Added {} Claude Code MCP config(s) to agent",
+                len(claude_compat.mcp_configs),
+            )
+
         _phase_t = time.monotonic()
         agent = await load_agent(
             agent_file,
             runtime,
-            mcp_configs=mcp_configs or [],
+            mcp_configs=merged_mcp_configs,
             start_mcp_loading=not defer_mcp_loading,
         )
         _phase_timings_ms["mcp_ms"] = int((time.monotonic() - _phase_t) * 1000)
@@ -323,6 +354,36 @@ class KimiCLI:
         from kimi_cli.hooks.engine import HookEngine
 
         hook_engine = HookEngine(config.hooks, cwd=str(session.work_dir))
+
+        # Add Claude Code hooks if compatibility layer is active
+        claude_compat = getattr(runtime, "claude_code_compat", None)
+        if claude_compat and claude_compat.extra_hooks:
+            hook_engine.add_hooks(claude_compat.extra_hooks)
+            logger.info(
+                "Added {count} Claude Code hook(s) to engine",
+                count=len(claude_compat.extra_hooks),
+            )
+
+        # Wire up hook visibility callbacks for shell UI
+        def _on_hook_resolved(
+            event: str, target: str, action: str, reason: str, duration_ms: int
+        ) -> None:
+            try:
+                from kimi_cli.ui.shell.prompt import toast
+
+                label = f"[hook] {event}"
+                if target:
+                    label += f"({target})"
+                label += f" → {action}"
+                if reason:
+                    label += f": {reason}"
+                label += f" [{duration_ms}ms]"
+                toast(label, duration=3.0, topic="hook_resolved")
+            except Exception:
+                pass
+
+        hook_engine.set_callbacks(on_resolved=_on_hook_resolved)
+
         soul.set_hook_engine(hook_engine)
         runtime.hook_engine = hook_engine
 

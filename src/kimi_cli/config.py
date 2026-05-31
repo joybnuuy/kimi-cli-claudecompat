@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 import tomlkit
 from pydantic import (
@@ -257,6 +257,10 @@ class Config(BaseModel):
             "project root (the nearest ``.git`` directory above the work dir). "
             "Missing paths are silently skipped."
         ),
+    )
+    claude_code: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Claude Code compatibility layer configuration. See [claude_code] section in config.toml.",
     )
     telemetry: bool = Field(
         default=True,
