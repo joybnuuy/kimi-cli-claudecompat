@@ -179,6 +179,7 @@ class KimiToolset:
         self._mcp_loading_task: asyncio.Task[None] | None = None
         self._deferred_mcp_load: tuple[list[MCPConfig], Runtime] | None = None
         self._hook_engine: HookEngine = HookEngine()
+        self._pending_system_messages: list[str] = []
 
         # Deduplication state
         self._previous_step_calls: list[ToolCallKey] = []
@@ -194,6 +195,29 @@ class KimiToolset:
 
     def set_hook_engine(self, engine: HookEngine) -> None:
         self._hook_engine = engine
+
+    def drain_system_messages(self) -> list[str]:
+        """Return and clear any pending system messages from hooks."""
+        messages = self._pending_system_messages
+        self._pending_system_messages = []
+        return messages
+
+    def _append_system_messages(self, results: list[Any]) -> None:
+        """Collect systemMessage from hook results and surface to UI + context."""
+        for result in results:
+            if result.system_message:
+                try:
+                    from kimi_cli.ui.shell.prompt import toast
+
+                    toast(
+                        f"[hook] {result.system_message}",
+                        duration=5.0,
+                        topic="hook_system_message",
+                    )
+                except Exception:
+                    pass  # toast unavailable outside shell UI
+                logger.info("Hook system message: {}", result.system_message)
+                self._pending_system_messages.append(result.system_message)
 
     def add(self, tool: ToolType) -> None:
         self._tool_dict[tool.name] = tool
@@ -377,6 +401,7 @@ class KimiToolset:
                         tool_call_id=tool_call.id,
                     ),
                 )
+                effective_arguments = arguments
                 for result in results:
                     if result.action == "block":
                         return ToolResult(
@@ -387,10 +412,24 @@ class KimiToolset:
                             ),
                         )
 
+                # Apply updatedInput and surface systemMessage from hooks
+                for result in results:
+                    if result.updated_input is not None:
+                        if isinstance(effective_arguments, dict):
+                            effective_arguments = {**effective_arguments, **result.updated_input}
+                        else:
+                            effective_arguments = result.updated_input
+                        logger.debug(
+                            "Hook rewrote tool input for {}: {}",
+                            tool_call.function.name,
+                            result.updated_input,
+                        )
+                self._append_system_messages(results)
+
                 # --- Execute tool ---
                 t0 = time.monotonic()
                 try:
-                    ret = await tool.call(arguments)
+                    ret = await tool.call(effective_arguments)
                 except Exception as e:
                     tool_elapsed = time.monotonic() - t0
                     logger.exception(
@@ -398,9 +437,9 @@ class KimiToolset:
                         tool_name=tool_name,
                         call_id=tool_call.id,
                     )
-                    # --- PostToolUseFailure (fire-and-forget) ---
-                    _hook_task = asyncio.create_task(
-                        self._hook_engine.trigger(
+                    # --- PostToolUseFailure ---
+                    try:
+                        post_results = await self._hook_engine.trigger(
                             "PostToolUseFailure",
                             matcher_value=tool_name,
                             input_data=events.post_tool_use_failure(
@@ -412,10 +451,9 @@ class KimiToolset:
                                 tool_call_id=tool_call.id,
                             ),
                         )
-                    )
-                    _hook_task.add_done_callback(
-                        lambda t: t.exception() if not t.cancelled() else None
-                    )
+                        self._append_system_messages(post_results)
+                    except Exception:
+                        logger.debug("PostToolUseFailure hook error, failing open")
                     from kimi_cli.telemetry import track
 
                     _error_type = type(e).__name__
@@ -458,9 +496,9 @@ class KimiToolset:
                         dup_type="cross_step" if is_cross_step_dup else "normal",
                     )
 
-                # --- PostToolUse (fire-and-forget) ---
-                _hook_task = asyncio.create_task(
-                    self._hook_engine.trigger(
+                # --- PostToolUse ---
+                try:
+                    post_results = await self._hook_engine.trigger(
                         "PostToolUse",
                         matcher_value=tool_name,
                         input_data=events.post_tool_use(
@@ -472,8 +510,9 @@ class KimiToolset:
                             tool_call_id=tool_call.id,
                         ),
                     )
-                )
-                _hook_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
+                    self._append_system_messages(post_results)
+                except Exception:
+                    logger.debug("PostToolUse hook error, failing open")
 
                 return ToolResult(tool_call_id=tool_call.id, return_value=ret)
 

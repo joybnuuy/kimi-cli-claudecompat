@@ -463,3 +463,20 @@ async def test_cross_step_dedup_not_triggered_after_back_to_the_future():
     # Should NOT have the cross-step reminder appended
     assert tr.return_value.output == "a"
     assert ts.dedup_triggered is False
+
+
+# --- drain_system_messages ---
+
+
+def test_drain_system_messages_returns_and_clears():
+    """drain_system_messages returns pending messages and clears the buffer."""
+    ts = _make_toolset()
+    ts._pending_system_messages = ["msg1", "msg2"]
+    assert ts.drain_system_messages() == ["msg1", "msg2"]
+    assert ts._pending_system_messages == []
+
+
+def test_drain_system_messages_empty_when_none():
+    """drain_system_messages returns empty list when nothing pending."""
+    ts = _make_toolset()
+    assert ts.drain_system_messages() == []

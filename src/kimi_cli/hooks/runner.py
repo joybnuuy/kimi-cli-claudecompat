@@ -18,6 +18,10 @@ class HookResult:
     stderr: str = ""
     exit_code: int = 0
     timed_out: bool = False
+    updated_input: dict[str, Any] | None = None
+    """If set, the hook wants to rewrite the tool's input arguments."""
+    system_message: str = ""
+    """If set, a message to inject into the conversation context."""
 
 
 async def run_hook(
@@ -73,17 +77,59 @@ async def run_hook(
         try:
             raw = json.loads(stdout)
             if isinstance(raw, dict):
-                parsed = cast(dict[str, Any], raw)
-                hook_output = cast(dict[str, Any], parsed.get("hookSpecificOutput", {}))
-                if hook_output.get("permissionDecision") == "deny":
-                    return HookResult(
-                        action="block",
-                        reason=str(hook_output.get("permissionDecisionReason", "")),
-                        stdout=stdout,
-                        stderr=stderr,
-                        exit_code=0,
-                    )
+                return _parse_hook_json(cast(dict[str, Any], raw), stdout, stderr)
         except (json.JSONDecodeError, TypeError):
             pass
 
     return HookResult(action="allow", stdout=stdout, stderr=stderr, exit_code=exit_code)
+
+
+def _parse_hook_json(
+    raw: dict[str, Any], stdout: str, stderr: str
+) -> HookResult:
+    """Parse Claude Code-compatible JSON output from a hook.
+
+    Supported fields (all optional):
+    - hookSpecificOutput.permissionDecision: "allow" | "deny" | "ask"
+    - hookSpecificOutput.permissionDecisionReason: str
+    - hookSpecificOutput.updatedInput: dict (rewrite tool arguments)
+    - systemMessage: str (inject into conversation)
+
+    Exit code semantics:
+    - 0 + permissionDecision="allow" → auto-approve
+    - 0 + permissionDecision="deny"  → block
+    - 0 + permissionDecision="ask"   → pass through (no auto-approve)
+    - 0 + no permissionDecision      → allow
+    """
+    hook_output = cast(dict[str, Any], raw.get("hookSpecificOutput", {}))
+
+    decision = hook_output.get("permissionDecision", "")
+    reason = str(hook_output.get("permissionDecisionReason", ""))
+    updated_input = hook_output.get("updatedInput")
+    system_message = str(raw.get("systemMessage", ""))
+
+    if not isinstance(updated_input, dict):
+        updated_input = None
+
+    if decision == "deny":
+        return HookResult(
+            action="block",
+            reason=reason,
+            stdout=stdout,
+            stderr=stderr,
+            exit_code=0,
+            updated_input=updated_input,
+            system_message=system_message,
+        )
+
+    # "allow" and "ask" both pass through — "allow" with updated_input,
+    # "ask" defers to kimi's normal approval flow
+    return HookResult(
+        action="allow",
+        reason=reason,
+        stdout=stdout,
+        stderr=stderr,
+        exit_code=0,
+        updated_input=updated_input,
+        system_message=system_message,
+    )

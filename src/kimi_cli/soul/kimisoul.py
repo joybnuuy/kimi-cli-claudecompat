@@ -1240,6 +1240,18 @@ class KimiSoul:
             "Appending tool messages to context: {tool_messages}", tool_messages=tool_messages
         )
         await self._context.append_message(tool_messages)
+
+        # Inject hook system messages into conversation context so the model can see them.
+        # We append them *after* tool results so the assistant→tool message pairs stay
+        # intact — some LLM APIs reject user messages interleaved between tool_calls and
+        # their matching tool results.
+        if isinstance(self._agent.toolset, KimiToolset):
+            hook_system_messages = self._agent.toolset.drain_system_messages()
+            for msg in hook_system_messages:
+                await self._context.append_message(
+                    Message(role="user", content=[system(msg)])
+                )
+                logger.debug("Injected hook system message into context: {}", msg)
         # token count of tool results are not available yet
 
     async def compact_context(
