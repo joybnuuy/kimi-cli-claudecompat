@@ -439,3 +439,42 @@ async def test_system_prompt_is_first_line_in_file(tmp_path: Path) -> None:
     assert lines[1]["role"] == "user"
     assert lines[2]["role"] == "_checkpoint"
     assert lines[3]["role"] == "_usage"
+
+
+async def test_adjust_token_count(tmp_path: Path) -> None:
+    path = tmp_path / "context.jsonl"
+    ctx = Context(path)
+    await ctx.update_token_count(1000)
+    assert ctx.token_count == 1000
+
+    ctx.adjust_token_count(-200)
+    assert ctx.token_count == 800
+
+    ctx.adjust_token_count(100)
+    assert ctx.token_count == 900
+
+    ctx.adjust_token_count(-1000)
+    assert ctx.token_count == 0  # floored at 0
+
+
+def test_adjust_token_count_subtracts_pending_first(tmp_path: Path) -> None:
+    """When reducing tokens, pending (rough estimate) is drained before token_count."""
+    ctx = Context(tmp_path / "context.jsonl")
+    # Simulate: API reported 500 tokens, then 300 tokens of messages appended
+    ctx._token_count = 500
+    ctx._pending_token_estimate = 300
+
+    # Remove 400 tokens — pending absorbs 300, token_count absorbs 100
+    ctx.adjust_token_count(-400)
+    assert ctx._pending_token_estimate == 0
+    assert ctx._token_count == 400
+    assert ctx.token_count_with_pending == 400
+
+    # Remove 500 more — token_count floors at 0
+    ctx.adjust_token_count(-500)
+    assert ctx._token_count == 0
+    assert ctx.token_count_with_pending == 0
+
+    # Positive delta adds directly to token_count
+    ctx.adjust_token_count(100)
+    assert ctx._token_count == 100

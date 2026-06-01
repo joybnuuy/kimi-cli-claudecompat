@@ -36,6 +36,9 @@ def test_default_config_dump():
                 "max_ralph_iterations": 0,
                 "reserved_context_size": 50000,
                 "compaction_trigger_ratio": 0.85,
+                "micro_compact_enabled": True,
+                "micro_compact_gap_threshold_minutes": 5.0,
+                "micro_compact_keep_recent": 3,
             },
             "background": {
                 "max_running_tasks": 4,

@@ -52,6 +52,7 @@ from kimi_cli.soul.compaction import (
     estimate_text_tokens,
     should_auto_compact,
 )
+from kimi_cli.soul.micro_compaction import microcompact_messages
 from kimi_cli.soul.context import Context
 from kimi_cli.soul.dynamic_injection import (
     DynamicInjection,
@@ -74,6 +75,7 @@ from kimi_cli.wire.types import (
     ContentPart,
     MCPLoadingBegin,
     MCPLoadingEnd,
+    Notification,
     StatusUpdate,
     SteerInput,
     StepBegin,
@@ -209,6 +211,7 @@ class KimiSoul:
         ]
         self._hook_engine: HookEngine = HookEngine()
         self._stop_hook_active: bool = False
+        self._last_assistant_message_time: float = time.monotonic()
         if self.is_root:
             self._runtime.notifications.ack_ids("llm", extract_notification_ids(context.history))
 
@@ -889,7 +892,51 @@ class KimiSoul:
             step_outcome: StepOutcome | None = None
 
             try:
-                # ── 2c. Context Compaction ──────────────────────────────────────
+                # Micro-compact old tool results before checking full compaction (LLM-free)
+                if self._loop_control.micro_compact_enabled:
+                    mc_result = microcompact_messages(
+                        self._context.history,
+                        last_assistant_time=self._last_assistant_message_time,
+                        gap_threshold_minutes=self._loop_control.micro_compact_gap_threshold_minutes,
+                        keep_recent=self._loop_control.micro_compact_keep_recent,
+                    )
+                    if mc_result.cleared_count > 0:
+                        self._context.adjust_token_count(-mc_result.tokens_saved)
+                        gap_min = round(
+                            (time.monotonic() - (self._last_assistant_message_time or 0))
+                            / 60.0
+                        )
+                        wire_send(
+                            Notification(
+                                id=f"microcompact-{time.monotonic()}",
+                                category="system",
+                                type="micro_compact",
+                                source_kind="soul",
+                                source_id="kimisoul",
+                                title="Micro-compaction",
+                                body=(
+                                    f"Cleared {mc_result.cleared_count} old tool result(s) "
+                                    f"(~{mc_result.tokens_saved} tokens) after {gap_min}min idle."
+                                ),
+                                severity="info",
+                                created_at=time.time(),
+                                payload={
+                                    "tools_cleared": mc_result.cleared_count,
+                                    "tokens_saved": mc_result.tokens_saved,
+                                    "gap_minutes": gap_min,
+                                },
+                            )
+                        )
+                        from kimi_cli.telemetry import track
+
+                        track(
+                            "micro_compact_triggered",
+                            gap_minutes=gap_min,
+                            tools_cleared=mc_result.cleared_count,
+                            tokens_saved=mc_result.tokens_saved,
+                        )
+
+                # compact the context if needed
                 if should_auto_compact(
                     self._context.token_count_with_pending,
                     self._runtime.llm.max_context_size,
@@ -1233,6 +1280,7 @@ class KimiSoul:
                 raise LLMNotSupported(self._runtime.llm, list(missing_caps))
 
         await self._context.append_message(result.message)
+        self._last_assistant_message_time = time.monotonic()
         if result.usage is not None:
             await self._context.update_token_count(result.usage.total)
 
