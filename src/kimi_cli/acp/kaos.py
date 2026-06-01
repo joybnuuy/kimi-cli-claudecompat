@@ -68,6 +68,9 @@ class ACPProcess:
         self._truncation_noted = False
         self._exit_future: asyncio.Future[int] = asyncio.get_running_loop().create_future()
         self._poll_task = asyncio.create_task(self._poll_output())
+        self._poll_task.add_done_callback(
+            lambda t: t.exception() if not t.cancelled() else None
+        )
 
     @property
     def pid(self) -> int:

@@ -581,12 +581,12 @@ class KimiSoul:
         skip_user_prompt_hook: bool = False,
     ):
         approval_source_token = None
-        created_approval_source: ApprovalSource | None = None
         turn_started = False
         turn_finished = False
         if get_current_approval_source_or_none() is None:
-            created_approval_source = ApprovalSource(kind="foreground_turn", id=uuid.uuid4().hex)
-            approval_source_token = set_current_approval_source(created_approval_source)
+            approval_source_token = set_current_approval_source(
+                ApprovalSource(kind="foreground_turn", id=uuid.uuid4().hex)
+            )
         try:
             # Refresh OAuth tokens on each turn to avoid idle-time expirations.
             await self._runtime.oauth.ensure_fresh(self._runtime)
@@ -706,12 +706,10 @@ class KimiSoul:
                     mode="plan" if self._plan_mode else "agent",
                     at_step=getattr(self, "_current_step_no", 0),
                 )
-            if created_approval_source is not None and self._runtime.approval_runtime is not None:
-                self._runtime.approval_runtime.cancel_by_source(
-                    created_approval_source.kind,
-                    created_approval_source.id,
-                )
             if approval_source_token is not None:
+                source = get_current_approval_source_or_none()
+                if source is not None and self._runtime.approval_runtime is not None:
+                    self._runtime.approval_runtime.cancel_by_source(source.kind, source.id)
                 reset_current_approval_source(approval_source_token)
 
     async def _turn(self, user_message: Message) -> TurnOutcome:
@@ -951,19 +949,16 @@ class KimiSoul:
                 # --- StopFailure hook ---
                 from kimi_cli.hooks import events as _hook_events
 
-                _hook_task = asyncio.create_task(
-                    self._hook_engine.trigger(
-                        "StopFailure",
-                        matcher_value=type(e).__name__,
-                        input_data=_hook_events.stop_failure(
-                            session_id=self._runtime.session.id,
-                            cwd=str(Path.cwd()),
-                            error_type=type(e).__name__,
-                            error_message=str(e),
-                        ),
-                    )
+                self._hook_engine.fire_and_forget_trigger(
+                    "StopFailure",
+                    matcher_value=type(e).__name__,
+                    input_data=_hook_events.stop_failure(
+                        session_id=self._runtime.session.id,
+                        cwd=str(Path.cwd()),
+                        error_type=type(e).__name__,
+                        error_message=str(e),
+                    ),
                 )
-                _hook_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
                 # break the agent loop
                 raise
 
@@ -1029,22 +1024,19 @@ class KimiSoul:
                 # --- Notification hook ---
                 from kimi_cli.hooks import events
 
-                _hook_task = asyncio.create_task(
-                    self._hook_engine.trigger(
-                        "Notification",
-                        matcher_value=view.event.type,
-                        input_data=events.notification(
-                            session_id=self._runtime.session.id,
-                            cwd=str(Path.cwd()),
-                            sink="llm",
-                            notification_type=view.event.type,
-                            title=view.event.title,
-                            body=view.event.body,
-                            severity=view.event.severity,
-                        ),
-                    )
+                self._hook_engine.fire_and_forget_trigger(
+                    "Notification",
+                    matcher_value=view.event.type,
+                    input_data=events.notification(
+                        session_id=self._runtime.session.id,
+                        cwd=str(Path.cwd()),
+                        sink="llm",
+                        notification_type=view.event.type,
+                        title=view.event.title,
+                        body=view.event.body,
+                        severity=view.event.severity,
+                    ),
                 )
-                _hook_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
 
             await self._runtime.notifications.deliver_pending(
                 "llm",
@@ -1376,19 +1368,16 @@ class KimiSoul:
             track_kwargs["llm_output_tokens"] = compaction_result.usage.output
         track("compaction_finished", **track_kwargs)
 
-        _hook_task = asyncio.create_task(
-            self._hook_engine.trigger(
-                "PostCompact",
-                matcher_value=trigger_reason,
-                input_data=events.post_compact(
-                    session_id=self._runtime.session.id,
-                    cwd=str(Path.cwd()),
-                    trigger=trigger_reason,
-                    estimated_token_count=estimated_token_count,
-                ),
-            )
+        self._hook_engine.fire_and_forget_trigger(
+            "PostCompact",
+            matcher_value=trigger_reason,
+            input_data=events.post_compact(
+                session_id=self._runtime.session.id,
+                cwd=str(Path.cwd()),
+                trigger=trigger_reason,
+                estimated_token_count=estimated_token_count,
+            ),
         )
-        _hook_task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
 
     @staticmethod
     def _is_retryable_error(exception: BaseException) -> bool:
@@ -1411,83 +1400,72 @@ class KimiSoul:
         *,
         chat_provider: object | None = None,
         _auth_retried: bool = False,
-        _connection_retried: bool = False,
     ) -> Any:
-        try:
-            return await operation()
-        except APIStatusError as error:
-            if error.status_code != 401 or _auth_retried:
-                raise
-            # Only attempt refresh+retry when the active model's provider
-            # uses OAuth.  For plain API-key providers there is nothing
-            # to refresh and retrying would just add latency.
-            active_provider = (
-                self._runtime.config.providers.get(self._runtime.llm.model_config.provider)
-                if self._runtime.llm and self._runtime.llm.model_config
-                else None
-            )
-            if not (active_provider and active_provider.oauth):
-                raise
-            logger.warning(
-                "Received 401 during {name}, attempting token refresh",
-                name=name,
-            )
+        auth_retried = _auth_retried
+        connection_retried = False
+
+        while True:
             try:
-                await self._runtime.oauth.ensure_fresh(self._runtime, force=True)
-            except Exception as refresh_exc:
-                logger.exception("Token refresh failed after 401.")
-                raise error from refresh_exc
-            # Re-enter full recovery so that transient connection errors
-            # on the retry are still handled by on_retryable_error.
-            return await self._run_with_connection_recovery(
-                name,
-                operation,
-                chat_provider=chat_provider,
-                _auth_retried=True,
-                _connection_retried=_connection_retried,
-            )
-        except (APIConnectionError, APITimeoutError) as error:
-            if _connection_retried:
+                return await operation()
+            except APIStatusError as error:
+                if error.status_code != 401 or auth_retried:
+                    raise
+                # Only attempt refresh+retry when the active model's provider
+                # uses OAuth.  For plain API-key providers there is nothing
+                # to refresh and retrying would just add latency.
+                active_provider = (
+                    self._runtime.config.providers.get(self._runtime.llm.model_config.provider)
+                    if self._runtime.llm and self._runtime.llm.model_config
+                    else None
+                )
+                if not (active_provider and active_provider.oauth):
+                    raise
                 logger.warning(
-                    "Chat provider recovery exhausted for {name}: {error_type}: {error}",
+                    "Received 401 during {name}, attempting token refresh",
+                    name=name,
+                )
+                try:
+                    await self._runtime.oauth.ensure_fresh(self._runtime, force=True)
+                except Exception as refresh_exc:
+                    logger.exception("Token refresh failed after 401.")
+                    raise error from refresh_exc
+                auth_retried = True
+                continue
+            except (APIConnectionError, APITimeoutError) as error:
+                if connection_retried:
+                    logger.warning(
+                        "Chat provider recovery exhausted for {name}: {error_type}: {error}",
+                        name=name,
+                        error_type=type(error).__name__,
+                        error=error,
+                    )
+                    error._kimi_recovery_exhausted = True  # type: ignore[attr-defined]
+                    raise
+                if not isinstance(chat_provider, RetryableChatProvider):
+                    raise
+                try:
+                    recovered = chat_provider.on_retryable_error(error)
+                except Exception:
+                    logger.exception(
+                        "Failed to recover chat provider during {name} after {error_type}.",
+                        name=name,
+                        error_type=type(error).__name__,
+                    )
+                    raise
+                if not recovered:
+                    logger.warning(
+                        "Chat provider recovery not available for {name} after {error_type}.",
+                        name=name,
+                        error_type=type(error).__name__,
+                    )
+                    raise
+                logger.info(
+                    "Recovered chat provider during {name} after {error_type}; retrying once.",
                     name=name,
                     error_type=type(error).__name__,
-                    error=error,
                 )
-                error._kimi_recovery_exhausted = True  # type: ignore[attr-defined]
-                raise
-            if not isinstance(chat_provider, RetryableChatProvider):
-                raise
-            try:
-                recovered = chat_provider.on_retryable_error(error)
-            except Exception:
-                logger.exception(
-                    "Failed to recover chat provider during {name} after {error_type}.",
-                    name=name,
-                    error_type=type(error).__name__,
-                )
-                raise
-            if not recovered:
-                logger.warning(
-                    "Chat provider recovery not available for {name} after {error_type}.",
-                    name=name,
-                    error_type=type(error).__name__,
-                )
-                raise
-            logger.info(
-                "Recovered chat provider during {name} after {error_type}; retrying once.",
-                name=name,
-                error_type=type(error).__name__,
-            )
-            # Re-enter the full recovery path so a 401 on the retry can still
-            # trigger OAuth refresh instead of bubbling straight to the user.
-            return await self._run_with_connection_recovery(
-                name,
-                operation,
-                chat_provider=chat_provider,
-                _auth_retried=_auth_retried,
-                _connection_retried=True,
-            )
+                connection_retried = True
+                continue
 
     @staticmethod
     def _retry_log(name: str, retry_state: RetryCallState):

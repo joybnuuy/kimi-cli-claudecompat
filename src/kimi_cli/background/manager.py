@@ -280,6 +280,7 @@ class BackgroundTaskManager:
         # itself. The done callback fires regardless of how the task ends, and
         # is idempotent with the runner's own pop (both use pop(..., None)).
         task.add_done_callback(lambda _t, tid=task_id: self._live_agent_tasks.pop(tid, None))
+        task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
         return self._store.merged_view(task_id)
 
     def list_tasks(
